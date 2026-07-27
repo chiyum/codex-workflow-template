@@ -1,0 +1,4 @@
+# 僅放低風險唯讀命令範例；實際政策由安裝者擴充。
+prefix_rule(pattern=["git", "status"], decision="allow")
+prefix_rule(pattern=["git", "diff"], decision="allow")
+

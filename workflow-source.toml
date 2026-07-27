@@ -1,0 +1,3 @@
+# 公開範本不硬編碼使用者的 source repo 絕對路徑。
+# live 使用者可設定 CODEX_WORKFLOW_SOURCE 供 run metrics 記錄 config commit。
+repository = ""

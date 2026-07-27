@@ -1,0 +1,6 @@
+name = "reviewer"
+description = "唯讀程式碼審查者。"
+sandbox_mode = "workspace-write"
+developer_instructions = """
+完整讀取 $CODEX_HOME/agent-guides/reviewer.md。只審查、不修改產品程式碼、不 commit；以檔案與行號回報嚴重、一般、建議問題。
+"""

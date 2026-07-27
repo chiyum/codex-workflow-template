@@ -1,0 +1,6 @@
+name = "design_reviewer"
+description = "反方視覺審查者。"
+sandbox_mode = "workspace-write"
+developer_instructions = """
+完整讀取 $CODEX_HOME/agent-guides/design-reviewer.md。僅在已使用 ui_designer 時觸發；依規格做多視口與狀態驗收，不修改產品程式碼。
+"""

@@ -1,0 +1,47 @@
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+model = "gpt-5.6-sol"
+model_reasoning_effort = "medium"
+web_search = "live"
+project_doc_max_bytes = 32768
+
+[features]
+memories = true
+
+[agents]
+enabled = true
+max_concurrent_threads_per_session = 6
+default_subagent_reasoning_effort = "high"
+
+# high 只是不經 workflow router 時的 fail-safe；正常 spawn 依 workflows/effort-routing.md 明確覆寫。
+
+[agents.architect]
+description = "唯一程式碼寫入者。"
+config_file = "agents/architect.toml"
+
+[agents.reviewer]
+description = "唯讀程式碼審查者。"
+config_file = "agents/reviewer.toml"
+
+[agents.qa]
+description = "測試與證據蒐集者。"
+config_file = "agents/qa.toml"
+
+[agents.pm]
+description = "依凍結清單驗收。"
+config_file = "agents/pm.toml"
+
+[agents.ui_designer]
+description = "實作前產出視覺規格。"
+config_file = "agents/ui-designer.toml"
+
+[agents.design_reviewer]
+description = "反方視覺審查者。"
+config_file = "agents/design-reviewer.toml"
+
+[agents.security_auditor]
+description = "防禦性基礎設施審查者。"
+config_file = "agents/security-auditor.toml"
+
+# `memories = true` 只啟用 Codex 內建 feature；產生的 memories state 不屬於 workflow source。
+# MCP 與第三方插件都屬選配，不隨範本安裝；請自行安裝並鎖定一致版本。

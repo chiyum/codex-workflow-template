@@ -1,0 +1,662 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  echo "用法：aiuse codex <profile> [codex args...]"
+  echo "例如：aiuse codex work --yolo"
+  echo "每個 profile 使用獨立 CODEX_HOME；只共用經管理的非帳號 workflow surfaces。"
+}
+
+is_auth_store_override() {
+  python3 - "$1" <<'PY'
+import re
+import sys
+
+
+class KeyParseError(Exception):
+    pass
+
+
+def assignment_key(text: str) -> str:
+    quote = ""
+    escaped = False
+    for index, character in enumerate(text):
+        if quote == '"':
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                quote = ""
+        elif quote == "'":
+            if character == "'":
+                quote = ""
+        elif character in ('"', "'"):
+            quote = character
+        elif character == "=":
+            return text[:index]
+    raise KeyParseError
+
+
+def decode_basic(content: str) -> str:
+    escapes = {"b": "\b", "t": "\t", "n": "\n", "f": "\f", "r": "\r", '"': '"', "\\": "\\"}
+    result: list[str] = []
+    index = 0
+    while index < len(content):
+        character = content[index]
+        if character != "\\":
+            if ord(character) < 0x20 or ord(character) == 0x7F:
+                raise KeyParseError
+            result.append(character)
+            index += 1
+            continue
+        index += 1
+        if index >= len(content):
+            raise KeyParseError
+        escape = content[index]
+        if escape in escapes:
+            result.append(escapes[escape])
+            index += 1
+            continue
+        digits = 4 if escape == "u" else 8 if escape == "U" else 0
+        if not digits or index + digits >= len(content):
+            raise KeyParseError
+        encoded = content[index + 1:index + 1 + digits]
+        if not re.fullmatch(r"[0-9A-Fa-f]+", encoded):
+            raise KeyParseError
+        codepoint = int(encoded, 16)
+        if codepoint > 0x10FFFF or 0xD800 <= codepoint <= 0xDFFF:
+            raise KeyParseError
+        result.append(chr(codepoint))
+        index += 1 + digits
+    return "".join(result)
+
+
+def canonical_key_path(text: str) -> tuple[str, ...]:
+    key = assignment_key(text)
+    parts: list[str] = []
+    index = 0
+    while True:
+        while index < len(key) and key[index] in " \t":
+            index += 1
+        if index >= len(key):
+            raise KeyParseError
+        if key[index] in ('"', "'"):
+            quote = key[index]
+            index += 1
+            content: list[str] = []
+            escaped = False
+            while index < len(key):
+                character = key[index]
+                if quote == '"' and escaped:
+                    content.extend(("\\", character))
+                    escaped = False
+                elif quote == '"' and character == "\\":
+                    escaped = True
+                elif character == quote:
+                    break
+                else:
+                    if ord(character) < 0x20 or ord(character) == 0x7F:
+                        raise KeyParseError
+                    content.append(character)
+                index += 1
+            if index >= len(key) or key[index] != quote or escaped:
+                raise KeyParseError
+            raw = "".join(content)
+            parts.append(decode_basic(raw) if quote == '"' else raw)
+            index += 1
+        else:
+            match = re.match(r"[A-Za-z0-9_-]+", key[index:])
+            if match is None:
+                raise KeyParseError
+            parts.append(match.group(0))
+            index += len(match.group(0))
+        while index < len(key) and key[index] in " \t":
+            index += 1
+        if index == len(key):
+            return tuple(parts)
+        if key[index] != ".":
+            raise KeyParseError
+        index += 1
+
+
+try:
+    canonical = canonical_key_path(sys.argv[1])
+except KeyParseError:
+    raise SystemExit(1)
+raise SystemExit(0 if canonical == ("cli_auth_credentials_store",) else 1)
+PY
+}
+
+assert_no_symlink_components() {
+  local candidate="$1"
+  python3 - "$candidate" <<'PY'
+import os
+from pathlib import Path
+import stat
+import sys
+
+path = Path(sys.argv[1])
+if not path.is_absolute() or any(part in ("", ".", "..") for part in path.parts[1:]):
+    raise SystemExit(1)
+current = Path(path.anchor)
+missing = False
+for part in path.parts[1:]:
+    current /= part
+    if missing:
+        continue
+    try:
+        mode = os.lstat(current).st_mode
+    except FileNotFoundError:
+        missing = True
+        continue
+    if stat.S_ISLNK(mode):
+        raise SystemExit(1)
+PY
+}
+
+acquire_profile_lock() {
+  if [ "${profile_lock_acquired:-0}" -eq 1 ]; then
+    return 0
+  fi
+  if [ ! -d "$profile_home" ] || ! exec 9<"$profile_home"; then
+    echo "錯誤：無法開啟 profile 協作鎖。" >&2
+    return 1
+  fi
+  if ! python3 - 9 <<'PY'
+import fcntl
+import sys
+
+try:
+    fcntl.flock(int(sys.argv[1]), fcntl.LOCK_EX | fcntl.LOCK_NB)
+except (BlockingIOError, OSError, ValueError):
+    raise SystemExit(1)
+PY
+  then
+    exec 9<&-
+    echo "錯誤：另一個 aiuse 正在使用同一 profile。" >&2
+    return 1
+  fi
+  profile_lock_acquired=1
+}
+
+preflight_auth_isolation() {
+  local barrier_phase="$1"
+  if [ ! -d "$profile_home" ]; then
+    return 0
+  fi
+  if ! python3 - "$profile_home" "$barrier_phase" <<'PY'
+import os
+import stat
+import sys
+
+
+class AuthIsolationError(Exception):
+    pass
+
+
+root, phase = sys.argv[1:]
+directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+regular_flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+
+
+def signature(metadata: os.stat_result) -> tuple[int, int, int, int]:
+    return metadata.st_dev, metadata.st_ino, stat.S_IFMT(metadata.st_mode), metadata.st_nlink
+
+
+def wait_for_test_race() -> None:
+    configured = os.environ.get("AIUSE_TEST_AUTH_RACE_PHASE", "")
+    if not configured:
+        return
+    if configured not in ("initial", "launch") or configured != phase:
+        return
+    try:
+        ready_fd = int(os.environ["AIUSE_TEST_AUTH_RACE_READY_FD"])
+        continue_fd = int(os.environ["AIUSE_TEST_AUTH_RACE_CONTINUE_FD"])
+        if ready_fd < 3 or continue_fd < 3:
+            raise ValueError
+        os.write(ready_fd, b"1")
+        if os.read(continue_fd, 1) != b"1":
+            raise AuthIsolationError
+    except (KeyError, OSError, ValueError) as error:
+        raise AuthIsolationError from error
+
+
+root_fd = -1
+auth_fd = -1
+try:
+    root_fd = os.open(root, directory_flags)
+    try:
+        metadata = os.stat("auth.json", dir_fd=root_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        raise SystemExit(0)
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+        raise AuthIsolationError
+    wait_for_test_race()
+    auth_fd = os.open("auth.json", regular_flags, dir_fd=root_fd)
+    opened = os.fstat(auth_fd)
+    if signature(metadata) != signature(opened) or not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
+        raise AuthIsolationError
+except (AuthIsolationError, OSError):
+    raise SystemExit(1)
+finally:
+    if auth_fd >= 0:
+        os.close(auth_fd)
+    if root_fd >= 0:
+        os.close(root_fd)
+PY
+  then
+    echo "錯誤：profile auth.json 不是安全的專屬 regular file。" >&2
+    return 1
+  fi
+}
+
+preflight_managed_link() {
+  local source="$1" target="$2"
+  if ! assert_no_symlink_components "$source" || [ -L "$source" ] || \
+    { [ ! -f "$source" ] && [ ! -d "$source" ]; }
+  then
+    echo "錯誤：共用設定不存在，未建立 managed links：$source" >&2
+    return 1
+  fi
+  if [ -e "$target" ] || [ -L "$target" ]; then
+    if [ -L "$target" ] && [ "$(readlink "$target")" = "$source" ]; then
+      return
+    fi
+    echo "錯誤：profile 已有非 managed 項目，未覆寫：$target" >&2
+    return 1
+  fi
+}
+
+rollback_managed_links() {
+  local index target source failed=0
+  for ((index=${#created_targets[@]}-1; index>=0; index--)); do
+    target="${created_targets[$index]}"
+    source="${created_sources[$index]}"
+    if [ -L "$target" ] && [ "$(readlink "$target")" = "$source" ]; then
+      rm -f -- "$target" || failed=1
+    fi
+  done
+  if [ "${created_profile_home:-0}" -eq 1 ]; then
+    rmdir "$profile_home" 2>/dev/null || failed=1
+  fi
+  if [ "${created_base_dir:-0}" -eq 1 ]; then
+    rmdir "$base_dir" 2>/dev/null || failed=1
+  fi
+  if [ "${created_profiles_parent:-0}" -eq 1 ]; then
+    rmdir "$profiles_parent" 2>/dev/null || failed=1
+  fi
+  return "$failed"
+}
+
+create_managed_link() {
+  local source="$1" target="$2"
+  if [ -e "$target" ] || [ -L "$target" ]; then
+    [ -L "$target" ] && [ "$(readlink "$target")" = "$source" ]
+    return
+  fi
+  if ! ln -s "$source" "$target"; then
+    return 1
+  fi
+  if [ ! -L "$target" ] || [ "$(readlink "$target")" != "$source" ]; then
+    return 1
+  fi
+  created_sources+=("$source")
+  created_targets+=("$target")
+}
+
+tool="${1:-}"
+profile="${2:-}"
+if [ "$tool" = "--help" ] || [ "$tool" = "-h" ]; then
+  usage
+  exit 0
+fi
+if [ "$tool" != "codex" ] || [ -z "$profile" ]; then
+  usage >&2
+  exit 1
+fi
+case "$profile" in
+  *[!A-Za-z0-9_-]* )
+    echo "錯誤：profile 只能包含英文字母、數字、連字號與底線。" >&2
+    exit 1
+    ;;
+esac
+shift 2
+
+base_dir="$HOME/.ai-profiles/codex"
+profiles_parent="$HOME/.ai-profiles"
+profile_home="$base_dir/$profile"
+source_home="${AIUSE_CODEX_CONFIG_SOURCE:-$HOME/.codex}"
+managed_items=(
+  AGENTS.md config.toml skills agents agent-guides products knowledge scripts workflows rules
+  workflow-source.toml manifest.tsv
+)
+
+for safe_path in "$HOME" "$profiles_parent" "$base_dir" "$profile_home" "$source_home"; do
+  if ! assert_no_symlink_components "$safe_path"; then
+    echo "錯誤：profile/source 路徑不可含 symlink ancestor：$safe_path" >&2
+    exit 1
+  fi
+done
+if [ -L "$profile_home" ]; then
+  echo "錯誤：profile root 不可使用 symlink：$profile_home" >&2
+  exit 1
+fi
+
+auth_file="$profile_home/auth.json"
+profile_lock_acquired=0
+if [ -d "$profile_home" ]; then
+  acquire_profile_lock || exit 1
+  preflight_auth_isolation initial || exit 1
+fi
+
+preflight_runtime_isolation() {
+  if [ ! -e "$profile_home" ]; then
+    return 0
+  fi
+
+  # 不以易漏項的 runtime 檔名 allowlist 判斷；只排除受控設定與 Codex 自有執行檔／暫存 surface。
+  if ! python3 - "$profile_home" auth.json packages tmp .tmp "${managed_items[@]}" <<'PY'
+import os
+import stat
+import sys
+
+
+class IsolationError(Exception):
+    pass
+
+
+root = sys.argv[1]
+excluded_top_level = set(sys.argv[2:])
+directory_flags = (
+    os.O_RDONLY
+    | getattr(os, "O_DIRECTORY", 0)
+    | getattr(os, "O_NOFOLLOW", 0)
+    | getattr(os, "O_CLOEXEC", 0)
+)
+regular_flags = (
+    os.O_RDONLY
+    | getattr(os, "O_NOFOLLOW", 0)
+    | getattr(os, "O_CLOEXEC", 0)
+    | getattr(os, "O_NONBLOCK", 0)
+)
+max_runtime_entries = 100_000
+max_runtime_depth = 128
+test_phase = os.environ.get("AIUSE_TEST_RUNTIME_RACE_PHASE", "")
+test_target = os.environ.get("AIUSE_TEST_RUNTIME_RACE_TARGET", "")
+test_hook_used = False
+
+
+def signature(metadata: os.stat_result) -> tuple[int, int, int, int]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        stat.S_IFMT(metadata.st_mode),
+        metadata.st_nlink,
+    )
+
+
+def wait_for_test_race(phase: str, entry_parts: tuple[str, ...] = ()) -> None:
+    global test_hook_used
+    if test_phase != phase or test_hook_used:
+        return
+    if phase == "before-regular-open" and "/".join(entry_parts) != test_target:
+        return
+    try:
+        ready_fd = int(os.environ["AIUSE_TEST_RUNTIME_RACE_READY_FD"])
+        continue_fd = int(os.environ["AIUSE_TEST_RUNTIME_RACE_CONTINUE_FD"])
+        if ready_fd < 3 or continue_fd < 3:
+            raise ValueError
+        os.write(ready_fd, b"1")
+        if os.read(continue_fd, 1) != b"1":
+            raise IsolationError
+    except (KeyError, OSError, ValueError) as error:
+        raise IsolationError from error
+    test_hook_used = True
+
+
+def scan_runtime(*, enable_entry_hook: bool) -> tuple[tuple[object, ...], ...]:
+    seen_directories: set[tuple[int, int]] = set()
+    records: list[tuple[object, ...]] = []
+    entry_count = 0
+
+    def record(parts: tuple[str, ...], kind: str, metadata: os.stat_result) -> None:
+        nonlocal entry_count
+        entry_count += 1
+        if entry_count > max_runtime_entries:
+            raise IsolationError
+        records.append((parts, kind, metadata.st_dev, metadata.st_ino, metadata.st_nlink))
+
+    def inspect_directory(
+        directory_fd: int,
+        *,
+        relative_parts: tuple[str, ...] = (),
+        top_level: bool = False,
+        depth: int = 0,
+    ) -> None:
+        if depth > max_runtime_depth:
+            raise IsolationError
+        with os.scandir(directory_fd) as entries:
+            for entry in entries:
+                if top_level and entry.name in excluded_top_level:
+                    continue
+                try:
+                    metadata = entry.stat(follow_symlinks=False)
+                except OSError as error:
+                    raise IsolationError from error
+
+                entry_parts = relative_parts + (entry.name,)
+                known_control_socket = entry_parts == (
+                    "app-server-control",
+                    "app-server-control.sock",
+                )
+                if known_control_socket:
+                    try:
+                        confirmed = os.stat(
+                            entry.name,
+                            dir_fd=directory_fd,
+                            follow_symlinks=False,
+                        )
+                    except OSError as error:
+                        raise IsolationError from error
+                    if (
+                        signature(metadata) != signature(confirmed)
+                        or not stat.S_ISSOCK(confirmed.st_mode)
+                        or confirmed.st_nlink != 1
+                    ):
+                        raise IsolationError
+                    record(entry_parts, "socket", confirmed)
+                    continue
+                if stat.S_ISLNK(metadata.st_mode):
+                    raise IsolationError
+                if stat.S_ISREG(metadata.st_mode):
+                    if metadata.st_nlink != 1:
+                        raise IsolationError
+                    if enable_entry_hook:
+                        wait_for_test_race("before-regular-open", entry_parts)
+                    regular_fd = -1
+                    try:
+                        regular_fd = os.open(
+                            entry.name,
+                            regular_flags,
+                            dir_fd=directory_fd,
+                        )
+                        opened = os.fstat(regular_fd)
+                        if (
+                            signature(metadata) != signature(opened)
+                            or not stat.S_ISREG(opened.st_mode)
+                            or opened.st_nlink != 1
+                        ):
+                            raise IsolationError
+                        record(entry_parts, "regular", opened)
+                    except OSError as error:
+                        raise IsolationError from error
+                    finally:
+                        if regular_fd >= 0:
+                            os.close(regular_fd)
+                    continue
+                if not stat.S_ISDIR(metadata.st_mode):
+                    raise IsolationError
+
+                child_fd = -1
+                try:
+                    child_fd = os.open(entry.name, directory_flags, dir_fd=directory_fd)
+                    opened = os.fstat(child_fd)
+                    if (
+                        (opened.st_dev, opened.st_ino) != (metadata.st_dev, metadata.st_ino)
+                        or not stat.S_ISDIR(opened.st_mode)
+                    ):
+                        raise IsolationError
+                    identity = (opened.st_dev, opened.st_ino)
+                    if identity in seen_directories:
+                        raise IsolationError
+                    seen_directories.add(identity)
+                    record(entry_parts, "directory", opened)
+                    inspect_directory(
+                        child_fd,
+                        relative_parts=entry_parts,
+                        depth=depth + 1,
+                    )
+                except OSError as error:
+                    raise IsolationError from error
+                finally:
+                    if child_fd >= 0:
+                        os.close(child_fd)
+
+    root_fd = -1
+    try:
+        root_fd = os.open(root, directory_flags)
+        root_metadata = os.fstat(root_fd)
+        if not stat.S_ISDIR(root_metadata.st_mode):
+            raise IsolationError
+        seen_directories.add((root_metadata.st_dev, root_metadata.st_ino))
+        inspect_directory(root_fd, top_level=True)
+    finally:
+        if root_fd >= 0:
+            os.close(root_fd)
+    return tuple(sorted(records))
+
+
+try:
+    if test_phase not in ("", "before-regular-open", "between-scans"):
+        raise IsolationError
+    first_snapshot = scan_runtime(enable_entry_hook=True)
+    wait_for_test_race("between-scans")
+    if test_phase and not test_hook_used:
+        raise IsolationError
+    second_snapshot = scan_runtime(enable_entry_hook=False)
+    if first_snapshot != second_snapshot:
+        raise IsolationError
+except (IsolationError, OSError):
+    raise SystemExit(1)
+PY
+  then
+    echo "錯誤：profile 執行期狀態含不安全的 link、特殊項目或路徑。" >&2
+    return 1
+  fi
+}
+
+preflight_runtime_isolation || exit 1
+
+for item in "${managed_items[@]}"; do
+  preflight_managed_link "$source_home/$item" "$profile_home/$item" || exit 1
+done
+
+created_sources=()
+created_targets=()
+created_profiles_parent=0
+created_base_dir=0
+created_profile_home=0
+umask 077
+if [ ! -d "$profiles_parent" ]; then
+  mkdir "$profiles_parent" || { rollback_managed_links; exit 1; }
+  created_profiles_parent=1
+fi
+if [ ! -d "$base_dir" ]; then
+  mkdir "$base_dir" || { rollback_managed_links; exit 1; }
+  created_base_dir=1
+fi
+if [ ! -d "$profile_home" ]; then
+  mkdir "$profile_home" || { rollback_managed_links; exit 1; }
+  created_profile_home=1
+fi
+for safe_path in "$base_dir" "$profile_home"; do
+  if ! assert_no_symlink_components "$safe_path"; then
+    echo "錯誤：profile 路徑建立後出現 symlink ancestor：$safe_path" >&2
+    exit 1
+  fi
+done
+if ! acquire_profile_lock || ! preflight_auth_isolation initial; then
+  rollback_managed_links || echo "錯誤：profile 建立失敗且 rollback 未完整完成。" >&2
+  exit 1
+fi
+chmod 700 "$base_dir" "$profile_home"
+if [ -f "$auth_file" ]; then
+  chmod 600 "$auth_file"
+fi
+
+for item in "${managed_items[@]}"; do
+  target="$profile_home/$item"
+  if ! create_managed_link "$source_home/$item" "$target"; then
+    rollback_managed_links || echo "錯誤：managed link rollback 未完整完成。" >&2
+    echo "錯誤：managed links 建立失敗，已回復本次變更。" >&2
+    exit 1
+  fi
+done
+
+codex_args=()
+options_active=1
+config_value_expected=0
+danger_flag_added=0
+for arg in "$@"; do
+  if [ "$options_active" -eq 0 ]; then
+    codex_args+=("$arg")
+  elif [ "$config_value_expected" -eq 1 ]; then
+    config_value_expected=0
+    if [ "$arg" = "--" ]; then
+      options_active=0
+      codex_args+=("$arg")
+    elif is_auth_store_override "$arg"; then
+      echo "錯誤：不可覆寫 cli_auth_credentials_store。" >&2
+      exit 1
+    else
+      codex_args+=("$arg")
+    fi
+  elif [ "$arg" = "--" ]; then
+    options_active=0
+    codex_args+=("$arg")
+  elif [ "$arg" = "-c" ] || [ "$arg" = "--config" ]; then
+    config_value_expected=1
+    codex_args+=("$arg")
+  elif [ "${arg#-c=}" != "$arg" ] || [ "${arg#--config=}" != "$arg" ] || [ "${arg#-c}" != "$arg" ]; then
+    value="${arg#*=}"
+    if [ "${arg#-c}" != "$arg" ] && [ "${arg#-c=}" = "$arg" ]; then
+      value="${arg#-c}"
+    fi
+    if is_auth_store_override "$value"; then
+      echo "錯誤：不可覆寫 cli_auth_credentials_store。" >&2
+      exit 1
+    fi
+    codex_args+=("$arg")
+  elif [ "$arg" = "--dangerously-skip-permissions" ]; then
+    if [ "$danger_flag_added" -eq 0 ]; then
+      codex_args+=("--dangerously-bypass-approvals-and-sandbox")
+      danger_flag_added=1
+    fi
+  elif [ "$arg" = "--dangerously-bypass-approvals-and-sandbox" ]; then
+    if [ "$danger_flag_added" -eq 0 ]; then
+      codex_args+=("$arg")
+      danger_flag_added=1
+    fi
+  else
+    codex_args+=("$arg")
+  fi
+done
+
+# 同一 OS uid 在 exec 後本來就能改寫 CODEX_HOME；此 gate 防既有／誤共享與
+# preflight 期間的非協作競態，並在交給 Codex 前做最後一次 bounded recheck。
+preflight_runtime_isolation || exit 1
+preflight_auth_isolation launch || exit 1
+echo "啟動 Codex profile: $profile"
+echo "帳號與執行狀態：${profile_home}（獨立）"
+CODEX_HOME="$profile_home" codex -c 'cli_auth_credentials_store="file"' "${codex_args[@]}" 9<&-

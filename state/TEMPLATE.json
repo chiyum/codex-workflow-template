@@ -1,0 +1,9 @@
+{
+  "task": "example-task",
+  "product": "sample_product",
+  "current_step": "0",
+  "next_action": "凍結驗收清單",
+  "status": "running",
+  "updated_at": 0
+}
+
