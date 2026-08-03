@@ -42,6 +42,8 @@ test -f "$target/scripts/aiuse"
 
 安裝器把安全的 `config.example.toml` 映射成目標的真正 `config.toml`，並把 `manifest.tsv` 一併安裝作為 provenance；其自我宣告必須恰有一筆且精確為 `install manifest.tsv manifest.tsv`。它會在路徑展開前拒絕空白 target，也拒絕 symlink ancestor、危險根目錄、source/target 重疊與非正規 manifest path。`--force` 只允許替換可由本次 trusted source 完整重建的現行 Codex workflow home：installed manifest 必須逐 byte 相同、全部 install destination 必須是 no-follow regular file 且 SHA-256 相同，檔案與目錄 inventory 也不得缺漏或多出 runtime payload。唯一 legacy fallback 會以 `policy/legacy-releases.tsv` 的已知 release tree fingerprint，精確核對全部目錄、檔案路徑與每檔 SHA-256，不拿 current source bytes 冒充舊版。僅偽造 marker／manifest、未知內容、hash drift、缺漏、symlink 或帶任意 extras 的 project 不會被替換。完整 staging 驗證後才建立時間戳備份並原子安裝；不符合已知 fingerprint 的舊 target 請改用全新 target。
 
+`validate.sh --installed <target>` 是唯讀的 managed-surface 健康檢查：只核對 trusted repo `manifest.tsv` 宣告的 destination 存在、其相對 ancestor 與檔案不經 symlink、檔案為 regular file，並驗證 `config.toml` 最小契約。它刻意不遍歷 manifest 外的 auth、session、cache、plugins 等 runtime extras，因此不能取代 installer `--force` 的 provenance、完整 inventory 與內容 hash 安全判斷。
+
 ## 客製
 
 - Products：複製 `products/TEMPLATE.md`，在 INDEX 註冊 repo、規格、環境、Git owner 與驗證。

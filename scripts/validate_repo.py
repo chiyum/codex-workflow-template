@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import py_compile
 import re
 import stat
@@ -105,13 +105,44 @@ def validate_workflow_contracts(root: Path) -> None:
         raise ValueError("dev skill does not follow workflow profile plan contract")
 
 
+def validate_managed_file(target: Path, destination: str) -> Path:
+    """只檢查 manifest 管理的單一檔案，不走訪 runtime extras。"""
+    relative = PurePosixPath(destination)
+    path = target.joinpath(*relative.parts)
+    try:
+        path.relative_to(target)
+    except ValueError as exc:
+        raise ValueError(f"managed destination escapes target: {destination}") from exc
+    current = target
+    for part in relative.parts[:-1]:
+        current /= part
+        try:
+            mode = os.lstat(current).st_mode
+        except FileNotFoundError as exc:
+            raise ValueError(f"managed destination ancestor missing: {current.relative_to(target)}") from exc
+        if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+            raise ValueError(f"managed destination ancestor is not a safe directory: {current.relative_to(target)}")
+        if current.resolve(strict=True) != current:
+            raise ValueError(f"managed destination ancestor traverses symlink: {current.relative_to(target)}")
+
+    try:
+        mode = os.lstat(path).st_mode
+    except FileNotFoundError as exc:
+        raise ValueError(f"managed destination missing: {destination}") from exc
+    if stat.S_ISLNK(mode):
+        raise ValueError(f"managed destination is symlink: {destination}")
+    if not stat.S_ISREG(mode):
+        raise ValueError(f"managed destination is not regular file: {destination}")
+    if path.resolve(strict=True) != path:
+        raise ValueError(f"managed destination traverses symlink: {destination}")
+    return path
+
+
 def validate_installed(root: Path, target: Path) -> None:
     _, expected = manifest_sources(root)
-    actual = inventory(target)
-    if actual != expected:
-        missing = sorted(expected - actual)
-        extra = sorted(actual - expected)
-        raise ValueError(f"installed inventory mismatch; missing={missing[:3]} extra={extra[:3]}")
+    if not stat.S_ISDIR(os.lstat(target).st_mode):
+        raise ValueError("installed target is not a directory")
+    managed = {destination: validate_managed_file(target, destination) for destination in sorted(expected)}
     assert_memories(target / "config.toml")
     validate_workflow_contracts(target)
     for required in (
@@ -126,7 +157,7 @@ def validate_installed(root: Path, target: Path) -> None:
         "scripts/collect-run-metrics.py",
         "scripts/workflow-profile.py",
     ):
-        if required not in actual:
+        if required not in managed:
             raise ValueError(f"installed target missing {required}")
 
 

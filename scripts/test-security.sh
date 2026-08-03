@@ -249,6 +249,63 @@ import sys
 p=Path(sys.argv[1]).resolve(); p.mkdir(parents=True); print(p)
 PY
 )"
+
+expect_installed_validation_rejected() {
+  local label="$1" target="$2" expected="$3"
+  capture_rc 1 "installed-$label" python3 "$ROOT/scripts/validate_repo.py" --root "$ROOT" --installed "$target"
+  grep -F "$expected" "$TMP/output" >/dev/null || {
+    echo "installed validation missing failure: $label" >&2
+    exit 1
+  }
+}
+
+# --installed 只驗 managed surface；runtime extras 不得影響結果。
+MANAGED_RUNTIME="$SAFE_PARENT/managed-runtime"
+bash "$ROOT/scripts/install.sh" --target "$MANAGED_RUNTIME" >/dev/null
+mkdir -p "$MANAGED_RUNTIME/plugins/cache/openai-bundled/chrome"
+printf 'runtime cache\n' > "$MANAGED_RUNTIME/plugins/cache/runtime-extra"
+ln -s "$SAFE_PARENT/unmanaged-plugin-target" "$MANAGED_RUNTIME/plugins/cache/openai-bundled/chrome/latest"
+python3 "$ROOT/scripts/validate_repo.py" --root "$ROOT" --installed "$MANAGED_RUNTIME" >/dev/null
+
+MANAGED_MISSING="$SAFE_PARENT/managed-missing"
+bash "$ROOT/scripts/install.sh" --target "$MANAGED_MISSING" >/dev/null
+python3 - "$MANAGED_MISSING/AGENTS.md" <<'PY'
+from pathlib import Path
+import sys
+Path(sys.argv[1]).unlink()
+PY
+expect_installed_validation_rejected missing "$MANAGED_MISSING" "managed destination missing: AGENTS.md"
+
+MANAGED_TARGET_LINK="$SAFE_PARENT/managed-target-link"
+bash "$ROOT/scripts/install.sh" --target "$MANAGED_TARGET_LINK" >/dev/null
+mv "$MANAGED_TARGET_LINK/AGENTS.md" "$MANAGED_TARGET_LINK/AGENTS.real"
+ln -s "AGENTS.real" "$MANAGED_TARGET_LINK/AGENTS.md"
+expect_installed_validation_rejected target-link "$MANAGED_TARGET_LINK" "managed destination is symlink: AGENTS.md"
+
+MANAGED_ANCESTOR_LINK="$SAFE_PARENT/managed-ancestor-link"
+bash "$ROOT/scripts/install.sh" --target "$MANAGED_ANCESTOR_LINK" >/dev/null
+mv "$MANAGED_ANCESTOR_LINK/agents" "$MANAGED_ANCESTOR_LINK/agents.real"
+ln -s "agents.real" "$MANAGED_ANCESTOR_LINK/agents"
+expect_installed_validation_rejected ancestor-link "$MANAGED_ANCESTOR_LINK" "managed destination ancestor is not a safe directory: agents"
+
+MANAGED_NONREGULAR="$SAFE_PARENT/managed-nonregular"
+bash "$ROOT/scripts/install.sh" --target "$MANAGED_NONREGULAR" >/dev/null
+mv "$MANAGED_NONREGULAR/AGENTS.md" "$MANAGED_NONREGULAR/AGENTS.real"
+mkdir "$MANAGED_NONREGULAR/AGENTS.md"
+expect_installed_validation_rejected nonregular "$MANAGED_NONREGULAR" "managed destination is not regular file: AGENTS.md"
+
+MANAGED_BAD_CONFIG="$SAFE_PARENT/managed-bad-config"
+bash "$ROOT/scripts/install.sh" --target "$MANAGED_BAD_CONFIG" >/dev/null
+python3 - "$MANAGED_BAD_CONFIG/config.toml" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+assert "memories = true" in text
+path.write_text(text.replace("memories = true", "memories = false", 1), encoding="utf-8")
+PY
+expect_installed_validation_rejected bad-config "$MANAGED_BAD_CONFIG" "Memories is not enabled in config.toml"
+
 materialize_known_legacy() {
   local target="$1"
   bash "$ROOT/scripts/install.sh" --target "$target" >/dev/null

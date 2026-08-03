@@ -61,7 +61,7 @@ tools:
 
 ## 證據與回報
 
-- 每條 `A<n>` 都要有落地證據，存至與凍結清單同名目錄的 `evidence/`；命令輸出使用 `verifier-A<n>-<說明>.txt`，UI 截圖使用 `verifier-A<n>-<說明>.png`。沒有凍結清單時才使用產品配置指定路徑。
+- 每條 `A<n>` 都要有落地證據，存至與凍結清單同名目錄的 `evidence/`；命令 evidence 必須保存退出碼與關鍵輸出，使用 `verifier-A<n>-<說明>.txt`，UI 截圖使用 `verifier-A<n>-<說明>.png`。沒有凍結清單時才使用產品配置指定路徑。
 - `Write` 只可用於上述證據檔；不得修改產品 code、測試 code、規格、migration、build/deploy script 或驗收清單。不得以空檔或無關截圖補 gate。
 - 結果分為 `PASS`、`FAIL`、`BLOCKED`；每條附實際步驟、預期、實際結果與證據路徑。
 - 不以 code inspection、推論或「測試應該會過」代替執行。
