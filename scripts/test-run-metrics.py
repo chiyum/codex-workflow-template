@@ -81,7 +81,9 @@ class RunMetricsTests(unittest.TestCase):
         )
 
     def read_run(self, slug: str) -> dict:
-        return json.loads((self.runs / f"20260802-{slug}.json").read_text(encoding="utf-8"))
+        matches = list(self.runs.glob(f"*-{slug}.json"))
+        self.assertEqual(1, len(matches), f"run 檔數量錯誤：{matches}")
+        return json.loads(matches[0].read_text(encoding="utf-8"))
 
     def write_main(self, session_id: str, values: list[dict]) -> None:
         write_jsonl(self.sessions / f"rollout-{session_id}.jsonl", [
@@ -285,7 +287,7 @@ class RunMetricsTests(unittest.TestCase):
             text=True, capture_output=True, check=False, env=environment,
         )
         self.assertEqual(0, completed.returncode, completed.stderr)
-        self.assertTrue((self.runs / "20260802-profile.json").exists())
+        self.assertEqual("ok", self.read_run("profile")["collector_status"])
 
     def test_requested_effort_accepts_max_and_ultra_without_routing_them(self) -> None:
         session_id = "extended-effort-session"
