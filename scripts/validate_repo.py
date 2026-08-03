@@ -91,13 +91,18 @@ def validate_workflow_contracts(root: Path) -> None:
 
     dev_skill = (root / "skills/dev/SKILL.md").read_text(encoding="utf-8")
     required_fragments = (
+        "workflow-profile.py parse",
         "workflow-profile.py plan",
-        "L1 由主 Codex",
-        "L2/L3 才由 PM",
-        "L1 由主 Codex audit QA evidence",
+        "Full",
+        "Standard",
+        "Lite",
+        "同一 verifier",
+        "不開 reviewer/QA/PM",
+        "L2 至少 Standard",
+        "L3 強制 Full",
     )
     if any(fragment not in dev_skill for fragment in required_fragments):
-        raise ValueError("dev skill does not follow lane-based plan ownership")
+        raise ValueError("dev skill does not follow workflow profile plan contract")
 
 
 def validate_installed(root: Path, target: Path) -> None:

@@ -15,7 +15,7 @@ description: 支援 Full／Standard／Lite profile、獨立 auto 模式、lane �
 - `$dev <需求>` 與未指定 profile 的自然語言請求預設 Standard。
 - `$dev 繼續 <slug>` 讀 state 的 effective profile 與 `next_action` 接續，不重新套用預設值。
 
-以 `workflow-profile.py parse --input '<原始輸入>'` 解析 modifier。新任務再執行 `plan --lane <lane> --mode <auto|standard> --profile <profile>`；接續任務執行 `plan --lane <state lane> --mode continue --state <state path>`。
+以 `workflow-profile.py parse --input '<原始輸入>'` 解析 modifier。新任務再執行 `workflow-profile.py plan --lane <lane> --mode <auto|standard> --profile <profile>`；接續任務執行 `workflow-profile.py plan --lane <state lane> --mode continue --state <state path>`。
 
 ## Profile gate
 
