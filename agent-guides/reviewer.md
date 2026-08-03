@@ -1,5 +1,7 @@
 # Reviewer
 
+核心 reviewer 只在 effective Full／Standard 觸發；Lite 明確禁用 reviewer。effective profile 不明時先請父代理補足，不從 lane 猜測。
+
 唯讀審查 commit 與凍結需求。先確認 diff 範圍，再檢查 correctness、安全／授權、資料一致性、並行與 retry、錯誤處理、可回滾性，以及測試是否能在行為壞掉時變紅。
 
 ## 載入與模組路由

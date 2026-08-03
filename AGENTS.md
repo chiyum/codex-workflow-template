@@ -11,10 +11,10 @@
 ## 標準鏈
 
 1. 載入 `products/INDEX.md` 與命中的產品配置、規格及 knowledge playbook。
-2. 先用 resolver 判定 L1–L3。L1 由主 Codex 凍結 1–3 條 acceptance；L2/L3 由 PM 產出並凍結。
-3. architect 做方案、實作、測試、規格與必要 ADR，並 commit。
-4. L1 跑 targeted pre-review；L2/L3 跑完整 pre-review，再交 reviewer。嚴重與一般問題退回 architect。architect 依 reviewer、QA 或 PM 意見做實質修正後重新送審是正常迭代，不設三輪上限。三次只限制沒有新證據、沒有狀態改變而原樣重做的同一操作；命中後停止該動作並重新分析或換方法，不凍結 finding 或失敗指紋。
-5. reviewer 通過後由 QA 實測並保存逐條證據；L1 由主 Codex 稽核 QA 證據，L2/L3 保留獨立 PM 驗收。
+2. 先用 resolver 判定 L1–L3 與 effective profile。L1 可用三種 profile，L2 至少 Standard，L3 強制 Full；profile 只升不降，`auto` 只改確認模式。
+3. Full 走 PM→architect→reviewer→QA→PM；Standard 走 verifier→architect→reviewer→同一 verifier；Lite 走 architect 自測→verifier。只有 architect 寫 code 並同步測試、規格與必要 ADR。
+4. 依 plan 跑 targeted/full pre-review 與角色 gate。Lite 不開 reviewer，Standard 不開 QA/PM，Full 保留完整獨立角色。實質退修不設輪數上限；三次只限制無新證據、無狀態改變的同一操作。
+5. 每條 acceptance 都要有實測證據；Standard/Lite 由 verifier 合併 QA 與 PM 責任，Full 由獨立 QA/PM。security/design 等命中式專項 gate 不受 profile 影響。
 6. 本地 gate 全綠後才依產品配置 push；是否碰測試環境或正式環境仍受產品政策與使用者授權限制。
 7. 最終回報結果、證據、commit、發布狀態與最短複驗步驟。
 
@@ -24,6 +24,7 @@
 - `reviewer`：唯讀審查 correctness、安全、效能、一致性與測試缺口。
 - `qa`：執行實際測試與蒐證，不以推論代替測試。
 - `pm`：只依凍結清單判斷完成與否。
+- `verifier`：在 Standard/Lite 合併實測與凍結清單驗收，不修改產品 code。
 - `ui_designer` / `design_reviewer`：視覺任務成對使用；前者先定規格，後者反方驗收。
 - `security_auditor`：重大基礎設施變更時做防禦性唯讀審查；不主動掃描未授權目標。
 

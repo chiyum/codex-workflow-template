@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""確定性解析 workflow risk lane 與 agent model/effort profile。"""
+"""確定性解析 workflow risk lane、執行 profile 與 agent model/effort。"""
 from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
+import shlex
 import sys
 
 
@@ -13,9 +15,19 @@ HIGH_RISK = {
     "major-architecture", "new-visual",
 }
 ROLES = {
-    "main", "architect", "reviewer", "qa", "test", "pm", "evidence",
+    "main", "architect", "reviewer", "qa", "test", "pm", "verifier", "evidence",
     "ui_designer", "design_reviewer", "security_auditor",
 }
+PROFILES = ("lite", "standard", "full")
+PROFILE_RANK = {profile: rank for rank, profile in enumerate(PROFILES)}
+LANE_PROFILE_FLOOR = {"L1": "lite", "L2": "standard", "L3": "full"}
+SPECIALIZED_GATES = (
+    "security_auditor_when_triggered",
+    "ui_designer_and_design_reviewer_when_triggered",
+)
+MANDATORY_INTERRUPTIONS = (
+    "irreversible_delete", "spending", "security", "prod", "contradictory_requirements",
+)
 
 
 def classify(args: argparse.Namespace) -> dict:
@@ -33,7 +45,71 @@ def classify(args: argparse.Namespace) -> dict:
         lane, reason = "L1", "符合 low-risk 全部必要條件"
     else:
         lane, reason = "L2", "未命中高風險，但不滿足 L1 全部必要條件"
-    return {"policy_version": 1, "lane": lane, "reason": reason, "risks": risks, "denied": denied}
+    return {"policy_version": 2, "lane": lane, "reason": reason, "risks": risks, "denied": denied}
+
+
+def parse_dev(args: argparse.Namespace) -> dict:
+    """解析 `$dev` modifiers；自然語言入口只套用預設 Standard。"""
+    raw = args.input.strip()
+    if not raw:
+        raise ValueError("開發需求不得為空")
+    try:
+        tokens = shlex.split(raw)
+    except ValueError as exc:
+        raise ValueError(f"指令引號無法解析：{exc}") from exc
+    if not tokens:
+        raise ValueError("開發需求不得為空")
+
+    explicit_dev = tokens[0] == "$dev"
+    if not explicit_dev:
+        return {
+            "policy_version": 2,
+            "entrypoint": "natural_language",
+            "mode": "standard",
+            "requested_profile": "standard",
+            "request": raw,
+            "continue_slug": None,
+        }
+
+    tokens = tokens[1:]
+    if tokens and tokens[0] == "繼續":
+        if len(tokens) != 2:
+            raise ValueError("接續語法必須是 `$dev 繼續 <slug>`")
+        return {
+            "policy_version": 2,
+            "entrypoint": "dev",
+            "mode": "continue",
+            "requested_profile": None,
+            "request": None,
+            "continue_slug": tokens[1],
+        }
+
+    requested_profile = "standard"
+    mode = "standard"
+    seen_profile = False
+    seen_auto = False
+    while tokens and tokens[0] in {*PROFILES, "auto"}:
+        modifier = tokens.pop(0)
+        if modifier == "auto":
+            if seen_auto:
+                raise ValueError("auto modifier 不得重複")
+            seen_auto = True
+            mode = "auto"
+        else:
+            if seen_profile:
+                raise ValueError("workflow profile 不得重複")
+            seen_profile = True
+            requested_profile = modifier
+    if not tokens:
+        raise ValueError("`$dev` 後必須提供需求文字")
+    return {
+        "policy_version": 2,
+        "entrypoint": "dev",
+        "mode": mode,
+        "requested_profile": requested_profile,
+        "request": " ".join(tokens),
+        "continue_slug": None,
+    }
 
 
 def profile_for(lane: str, role: str) -> tuple[str, str, str]:
@@ -41,7 +117,7 @@ def profile_for(lane: str, role: str) -> tuple[str, str, str]:
         return "gpt-5.6-sol", "medium", "parent"
     if role == "evidence":
         return "gpt-5.6-terra", "low", "none"
-    if role in {"qa", "test"}:
+    if role in {"qa", "test", "verifier"}:
         return "gpt-5.6-terra", "medium", "none"
     if role == "security_auditor":
         return "gpt-5.6-sol", "high", "bounded"
@@ -69,7 +145,7 @@ def resolve(args: argparse.Namespace) -> dict:
     action = "followup" if args.reuse else "spawn"
     fork_turns = None if action == "followup" or args.role == "main" else ("none" if history_mode == "none" else "3")
     return {
-        "policy_version": 1,
+        "policy_version": 2,
         "lane": args.lane,
         "role": args.role,
         "action": action,
@@ -82,27 +158,118 @@ def resolve(args: argparse.Namespace) -> dict:
     }
 
 
-def plan(args: argparse.Namespace) -> dict:
-    """把 lane 直接展開成可測試的 gate 計畫，避免文字流程各自解讀。"""
-    if args.lane == "L1":
+def effective_profile(lane: str, requested: str) -> tuple[str, str | None]:
+    floor = LANE_PROFILE_FLOOR[lane]
+    if PROFILE_RANK[requested] >= PROFILE_RANK[floor]:
+        return requested, None
+    return floor, f"{lane} 最低允許 {floor}；已由 requested {requested} 升級"
+
+
+def load_continue_state(path: str, lane: str) -> tuple[str, str, str | None, dict]:
+    try:
+        state = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("continue state 無法讀取") from exc
+    if not isinstance(state, dict):
+        raise ValueError("continue state 必須是 JSON object")
+    if state.get("lane") != lane:
+        raise ValueError("continue state lane 與 --lane 不一致")
+    requested = state.get("requested_profile")
+    effective = state.get("effective_profile")
+    reason = state.get("profile_upgrade_reason")
+    if requested not in PROFILES or effective not in PROFILES:
+        raise ValueError("continue state 缺少合法 requested/effective profile")
+    if PROFILE_RANK[effective] < PROFILE_RANK[requested]:
+        raise ValueError("continue state 不得把 requested profile 降級")
+    if PROFILE_RANK[effective] < PROFILE_RANK[LANE_PROFILE_FLOOR[lane]]:
+        raise ValueError("continue state effective profile 低於 lane 下限")
+    if requested != effective and (not isinstance(reason, str) or not reason.strip()):
+        raise ValueError("continue state 發生升級時必須保存原因")
+    if not isinstance(state.get("next_action"), str) or not state["next_action"].strip():
+        raise ValueError("continue state 缺少 next_action")
+    return requested, effective, reason, state
+
+
+def gates_for(profile: str) -> dict:
+    if profile == "full":
         return {
-            "policy_version": 1,
-            "lane": args.lane,
-            "mode": args.mode,
-            "acceptance_owner": "main",
+            "acceptance_owner": "pm",
+            "acceptance_pm_spawn_count": 1,
+            "agent_sequence": ["pm", "architect", "reviewer", "qa", "pm"],
+            "ordered_role_gates": [
+                "pm:acceptance", "architect:implementation", "reviewer:code_review",
+                "qa:verification", "pm:independent_acceptance",
+            ],
+            "role_spawn_counts": {"architect": 1, "reviewer": 1, "qa": 1, "pm": 2, "verifier": 0},
+            "disabled_core_roles": [],
+            "pm_acceptance": "independent_pm",
+            "architect_self_test": True,
+            "verifier_reuse": False,
+        }
+    if profile == "standard":
+        return {
+            "acceptance_owner": "verifier",
             "acceptance_pm_spawn_count": 0,
-            "pre_review": "targeted",
-            "pm_acceptance": "main_evidence_audit",
+            "agent_sequence": ["verifier", "architect", "reviewer", "verifier"],
+            "ordered_role_gates": [
+                "verifier:acceptance", "architect:implementation", "reviewer:code_review",
+                "verifier:verification_and_acceptance",
+            ],
+            "role_spawn_counts": {"architect": 1, "reviewer": 1, "qa": 0, "pm": 0, "verifier": 1},
+            "disabled_core_roles": ["qa", "pm"],
+            "pm_acceptance": "verifier",
+            "architect_self_test": True,
+            "verifier_reuse": True,
         }
     return {
-        "policy_version": 1,
+        "acceptance_owner": "main",
+        "acceptance_pm_spawn_count": 0,
+        "agent_sequence": ["architect", "verifier"],
+        "ordered_role_gates": [
+            "architect:implementation_and_self_test", "verifier:verification_and_acceptance",
+        ],
+        "role_spawn_counts": {"architect": 1, "reviewer": 0, "qa": 0, "pm": 0, "verifier": 1},
+        "disabled_core_roles": ["reviewer", "qa", "pm"],
+        "pm_acceptance": "verifier",
+        "architect_self_test": True,
+        "verifier_reuse": False,
+    }
+
+
+def plan(args: argparse.Namespace) -> dict:
+    """把 lane 與 profile 展開成可測試 gate 計畫，避免文字流程各自解讀。"""
+    if args.mode == "continue":
+        if not args.state:
+            raise ValueError("continue mode 必須提供 --state")
+        requested, effective, upgrade_reason, state = load_continue_state(args.state, args.lane)
+    else:
+        if args.state:
+            raise ValueError("只有 continue mode 可使用 --state")
+        requested = args.profile
+        effective, upgrade_reason = effective_profile(args.lane, requested)
+        state = None
+    result = {
+        "policy_version": 2,
         "lane": args.lane,
         "mode": args.mode,
-        "acceptance_owner": "pm",
-        "acceptance_pm_spawn_count": 1,
-        "pre_review": "full",
-        "pm_acceptance": "independent_pm",
+        "requested_profile": requested,
+        "effective_profile": effective,
+        "profile_upgrade_reason": upgrade_reason,
+        "confirmation_required": args.mode == "standard",
+        "pre_review": "targeted" if args.lane == "L1" else "full",
+        "specialized_gates": list(SPECIALIZED_GATES),
+        "mandatory_interruptions": list(MANDATORY_INTERRUPTIONS),
+        **gates_for(effective),
     }
+    if state is not None:
+        result.update({
+            "continued_from_state": True,
+            "state_task": state.get("task"),
+            "next_action": state["next_action"],
+        })
+    else:
+        result["continued_from_state"] = False
+    return result
 
 
 def parser() -> argparse.ArgumentParser:
@@ -115,6 +282,8 @@ def parser() -> argparse.ArgumentParser:
     lane.add_argument("--single-repo", action="store_true")
     lane.add_argument("--rollbackable", action="store_true")
     lane.add_argument("--target", choices=("local", "dev", "prod", "unknown"), default="unknown")
+    parse_parser = subparsers.add_parser("parse")
+    parse_parser.add_argument("--input", required=True)
     resolve_parser = subparsers.add_parser("resolve")
     resolve_parser.add_argument("--lane", choices=("L1", "L2", "L3"), required=True)
     resolve_parser.add_argument("--role", choices=sorted(ROLES), required=True)
@@ -123,6 +292,8 @@ def parser() -> argparse.ArgumentParser:
     plan_parser = subparsers.add_parser("plan")
     plan_parser.add_argument("--lane", choices=("L1", "L2", "L3"), required=True)
     plan_parser.add_argument("--mode", choices=("auto", "standard", "continue"), default="standard")
+    plan_parser.add_argument("--profile", choices=PROFILES, default="standard")
+    plan_parser.add_argument("--state")
     return root
 
 
@@ -131,6 +302,8 @@ def main() -> int:
     try:
         if args.command == "lane":
             result = classify(args)
+        elif args.command == "parse":
+            result = parse_dev(args)
         elif args.command == "resolve":
             result = resolve(args)
         else:

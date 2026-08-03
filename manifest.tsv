@@ -11,6 +11,7 @@ install	agent-guides/reviewer-modules.md	agent-guides/reviewer-modules.md
 install	agent-guides/reviewer.md	agent-guides/reviewer.md
 install	agent-guides/security-auditor.md	agent-guides/security-auditor.md
 install	agent-guides/ui-designer.md	agent-guides/ui-designer.md
+install	agent-guides/verifier.md	agent-guides/verifier.md
 install	agents/architect.toml	agents/architect.toml
 install	agents/design-reviewer.toml	agents/design-reviewer.toml
 install	agents/pm.toml	agents/pm.toml
@@ -18,6 +19,7 @@ install	agents/qa.toml	agents/qa.toml
 install	agents/reviewer.toml	agents/reviewer.toml
 install	agents/security-auditor.toml	agents/security-auditor.toml
 install	agents/ui-designer.toml	agents/ui-designer.toml
+install	agents/verifier.toml	agents/verifier.toml
 install	config.example.toml	config.toml
 install	hooks/README.md	hooks/README.md
 install	knowledge/INDEX.md	knowledge/INDEX.md

@@ -1,10 +1,18 @@
 # Codex Workflow Template
 
-可公開重用的 Codex 多 agent 開發工作流範本。它展示主 Codex → PM 凍結 → architect 唯一寫入 → reviewer → QA／PM 證據 gate → 發布驗證的完整鏈，且不含任何個人、客戶、內部產品或執行期資料。
+可公開重用的 Codex 多 agent 開發工作流範本。它提供 Full、Standard、Lite 三種可測 profile、lane 風險升級與發布驗證，且不含任何個人、客戶、內部產品或執行期資料。
 
 ## 收錄與排除
 
-`manifest.tsv` 是 machine-checkable 清單：`install` 會進目標 `CODEX_HOME`，`support` 只服務此 repo。範本包含 AGENTS、七個子 agent、L1–L3 resolver、effort routing、standard/rapid workflow、匿名 product template/example、通用 knowledge router、dev/discover/rapid/retro skills、metrics v2、aiuse Codex profile 隔離、驗收／state 制度、rules 與安全腳本。
+`manifest.tsv` 是 machine-checkable 清單：`install` 會進目標 `CODEX_HOME`，`support` 只服務此 repo。範本包含 AGENTS、八個子 agent、L1–L3 resolver、effort routing、standard/rapid workflow、匿名 product template/example、通用 knowledge router、dev/discover/rapid/retro skills、metrics、aiuse Codex profile 隔離、驗收／state 制度、rules 與安全腳本。
+
+## `$dev` profile
+
+- `$dev full <需求>`：PM → architect → reviewer → QA → PM。
+- `$dev standard <需求>`：verifier → architect → reviewer → 同一 verifier；未指定 profile 時的預設。
+- `$dev lite <需求>`：architect 自測 → verifier。
+- profile 後可加 `auto`，只略過第一次確認；既有 `$dev auto <需求>` 等於 Standard auto。
+- `$dev 繼續 <slug>` 沿用 state 的 effective profile。L1 可用三種，L2 至少 Standard，L3 強制 Full。
 
 永遠排除 auth、secrets、env、webhook、sessions、history、logs、SQLite、cache、MCP runtime、shell snapshots、models cache、installation id、plugin cache、OpenAI `.system` skills，以及 Memories 生成內容、database 與 runtime state。第三方 MCP 或插件屬選配，請自行安裝並讓所有相依元件使用一致版本。
 

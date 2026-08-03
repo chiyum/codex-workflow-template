@@ -1,16 +1,28 @@
 ---
 name: dev
-description: 自主執行凍結、architect、review、QA/PM、發布驗證與一次性回報的完整開發管線。
+description: 支援 Full／Standard／Lite profile、獨立 auto 模式、lane 升級與 state 接續的一鍵開發管線。
 ---
 
 # Dev Skill
 
-1. 讀 `AGENTS.md`、產品配置與 `workflows/development-workflow.md`。
-2. 依 `workflow-profile.py plan` 的 owner 凍結驗收：L1 由主 Codex 產出 1–3 條且不 spawn PM；L2/L3 才由 PM 產出。大型任務建立 state checkpoint。
-3. 只委派 architect 寫產品程式碼。大改自主採 architect 推薦方案並記錄理由。
-4. 跑 pre-review，交 reviewer；嚴重／一般 finding 退 architect。architect 有實質修正或新證據就持續完整 gate，不設退修輪數上限。只有沒有新證據、沒有狀態改變而原樣重做同一操作三次仍同結果，才停止該動作並重新分析或換方法，不凍結 finding。
-5. reviewer 通過後交 QA；L1 由主 Codex audit QA evidence，L2/L3 再交獨立 PM 驗收；大型任務依 lane 加反方 PM。
-6. 本地全綠才依產品配置 push 與驗證測試環境。正式環境需另有明確授權。
-7. 一次回報清單結果、證據、commit、發布狀態、決策與最短複驗。
+本 skill 是標準開發流程入口。所有 gate 以 `scripts/workflow-profile.py` 的確定性輸出為準。
 
-任何 agent 都不得改 gate、縮放需求或用推論取代測試。
+## 語法
+
+- `$dev full <需求>`、`$dev standard <需求>`、`$dev lite <需求>`：選擇 requested profile。
+- profile 後可加 `auto`；它只略過步驟 0 的確認，不改 profile。
+- 既有 `$dev auto <需求>` 等於 Standard + auto。
+- `$dev <需求>` 與未指定 profile 的自然語言請求預設 Standard。
+- `$dev 繼續 <slug>` 讀 state 的 effective profile 與 `next_action` 接續，不重新套用預設值。
+
+以 `workflow-profile.py parse --input '<原始輸入>'` 解析 modifier。新任務再執行 `plan --lane <lane> --mode <auto|standard> --profile <profile>`；接續任務執行 `plan --lane <state lane> --mode continue --state <state path>`。
+
+## Profile gate
+
+- **Full**：PM 凍結 → architect → reviewer → 獨立 QA → 獨立 PM。
+- **Standard**：同一 verifier 凍結 → architect → reviewer → follow-up verifier 合併實測與驗收；不開 QA/PM。
+- **Lite**：主 Codex 凍結 → architect 修改與自測 → verifier 實測與驗收；不開 reviewer/QA/PM。
+
+L1 可用三種 profile；L2 至少 Standard；L3 強制 Full。只能升級，不能降級。security/design 等命中式專項 gate 一律保留。
+
+auto 與一般模式都只能在不可逆刪除、付費、資安、正式環境或需求矛盾時中斷。每個 gate 轉換更新 state；最終回報逐條證據、commit、發布狀態、決策與最短複驗。

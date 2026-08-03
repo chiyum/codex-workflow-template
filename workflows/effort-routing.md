@@ -1,6 +1,6 @@
 # Model／effort 與風險路由（唯一政策來源）
 
-主 Codex 先以 `python3 ~/.codex/scripts/workflow-profile.py lane ...` 決定 lane，再以 `plan --lane <lane> --mode <auto|standard|continue>` 取得 acceptance owner、PM spawn 數與 pre-review gate；任何 agent spawn 前再以 `resolve` 取得明確 `model`、`reasoning_effort` 與 `fork_turns`。不得只靠自然語言暗示降級。custom agent TOML 不固定 model/effort，避免覆蓋 explicit spawn；`config.toml [agents]` 的 `high` 只是不經 router 時的 fail-safe。
+主 Codex 先以 `python3 ~/.codex/scripts/workflow-profile.py lane ...` 決定 lane，再以 `plan --lane <lane> --mode <auto|standard> --profile <lite|standard|full>` 取得 requested/effective profile、升級原因與 ordered gates；continue 改用 `--mode continue --state <path>`。任何 agent spawn 前再以 `resolve` 取得明確 `model`、`reasoning_effort` 與 `fork_turns`。不得只靠自然語言暗示降級。custom agent TOML 不固定 model/effort，避免覆蓋 explicit spawn；`config.toml [agents]` 的 `high` 只是不經 router 時的 fail-safe。
 
 ## 風險 lane
 
@@ -8,6 +8,16 @@
 - `L2 standard`：未命中高風險，但不滿足 L1 全部條件。
 - `L3 high-risk`：auth、權限、租戶、DB、migration、資料一致性、跨 repo contract、基礎設施、金流、不可逆、prod、重大架構、全新視覺任一命中即強制進入。
 - `$rapid` 仍只接受明確觸發；L1 絕不自動切 rapid。
+
+## Workflow profile floor 與 gate
+
+| effective profile | 核心角色順序 | 禁用角色 |
+|---|---|---|
+| Full | PM acceptance → architect → reviewer → QA → 獨立 PM | 無 |
+| Standard | verifier acceptance → architect → reviewer → follow-up 同一 verifier | QA、PM |
+| Lite | architect 自測 → verifier | reviewer、QA、PM |
+
+L1 的 floor 是 Lite、L2 是 Standard、L3 是 Full。requested profile 只可保留或升級；plan 必須同時輸出 requested/effective 與升級原因。`auto` 只改確認模式，不改 profile。security auditor 與成對 design gate 仍按觸發條件附加，不受 profile 禁用角色影響。
 
 ## Profile 矩陣
 
@@ -17,6 +27,7 @@
 | L1 architect/reviewer | `gpt-5.6-sol` | `medium` | bounded 3 turns |
 | L2 architect/reviewer | `gpt-5.6-sol` | `high` | bounded 3 turns |
 | L1–L3 QA／test 執行 | `gpt-5.6-terra` | `medium` | none |
+| L1–L2 verifier（Standard/Lite） | `gpt-5.6-terra` | `medium` | none |
 | L1–L3 純 evidence 整理（L1 audit 仍由 main 直接完成） | `gpt-5.6-terra` | `low` | none |
 | L3 architect/reviewer/PM/UI 判斷角色、security auditor | `gpt-5.6-sol` | `high` | bounded 3 turns |
 
@@ -30,7 +41,7 @@ Luna low/medium 只列為未來可重新 benchmark 的 candidate；不得因 Ter
 
 ## Reuse 與遙測
 
-- 同任務退修用既有 architect/reviewer 的 follow-up，只傳 finding、diff/commit 與新增證據；local→dev 沿用同一 QA，只傳環境與 delta。
+- 同任務退修用既有 architect/reviewer 的 follow-up，只傳 finding、diff/commit 與新增證據；Standard 的 acceptance→驗收重用同一 verifier，local→dev 沿用同一 QA/verifier，只傳環境與 delta。
 - 只有 L3 獨立性、反方審查、不同責任維度或原 agent 已不可用才新 spawn。
 - 收集 metrics 時傳 `--risk-lane`、main 的 `--requested-model/--requested-effort`；collector 會以 `turn_context` 記 effective 值並在漂移時告警。
 - A/B 由 `gpt-5.6-terra / medium`、`fork_turns=none` 的機械 agent 執行，每個 before/after 至少 5 筆。未滿樣本不得宣稱節省百分比。

@@ -27,6 +27,10 @@ config_file = "agents/reviewer.toml"
 description = "測試與證據蒐集者。"
 config_file = "agents/qa.toml"
 
+[agents.verifier]
+description = "合併 QA 實測與 PM 驗收。"
+config_file = "agents/verifier.toml"
+
 [agents.pm]
 description = "依凍結清單驗收。"
 config_file = "agents/pm.toml"
