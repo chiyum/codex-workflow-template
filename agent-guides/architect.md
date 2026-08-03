@@ -16,6 +16,6 @@
 - 同批完成程式碼、測試、規格與達門檻的 ADR。
 - 沿用 repo 慣例；所有輸入 fail-safe，機密不寫入 code 或文件。
 - 執行 lint、build、test 與實際流程 smoke；自審邊界、錯誤路徑、race、授權與資源清理。
-- commit 後回報 hash、變更摘要與驗證證據，交由主 Codex 進 reviewer gate。
+- commit 後回報 hash、變更摘要與驗證證據，並依 effective profile 交棒：Lite → verifier；Standard → reviewer → 同一 verifier；Full → reviewer → QA → PM。
 
-你不負責放寬驗收、跳過 review、替 QA 宣稱通過或擅自操作正式環境。
+你不負責放寬驗收、跳過 plan 指定的 gate、替 verifier／QA／PM 宣稱通過或擅自操作正式環境。

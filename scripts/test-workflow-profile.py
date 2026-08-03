@@ -19,6 +19,19 @@ def run(*args: str, expected: int = 0) -> dict:
     return json.loads(completed.stdout)
 
 
+def run_stdin(source: str, expected: int = 0) -> dict:
+    completed = subprocess.run(
+        ["python3", str(SCRIPT), "parse", "--stdin"],
+        input=source,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != expected:
+        raise AssertionError(f"rc={completed.returncode} stdout={completed.stdout} stderr={completed.stderr}")
+    return json.loads(completed.stdout)
+
+
 class WorkflowProfileTests(unittest.TestCase):
     def test_l1_requires_every_eligibility_predicate(self) -> None:
         result = run("lane", "--l1-candidate", "--acceptance-count", "2", "--single-repo", "--rollbackable", "--target", "dev")
@@ -96,6 +109,20 @@ class WorkflowProfileTests(unittest.TestCase):
             continuation["mode"], continuation["continue_slug"], continuation["requested_profile"],
         ))
 
+    def test_dev_parser_preserves_request_and_never_shell_parses_it(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "不應建立"
+            requirement = f"don't normalize  \"unterminated $(touch {marker}) ; keep 'quotes'  "
+            raw = f"$dev lite auto {requirement}"
+            for parsed in (run("parse", "--input", raw), run_stdin(raw)):
+                with self.subTest(entry=parsed):
+                    self.assertEqual(("lite", "auto", requirement), (
+                        parsed["requested_profile"], parsed["mode"], parsed["request"],
+                    ))
+            self.assertFalse(marker.exists())
+        natural = run_stdin("don't reject an unmatched ' or \" quote")
+        self.assertEqual("don't reject an unmatched ' or \" quote", natural["request"])
+
     def test_lane_profile_floor_never_downgrades(self) -> None:
         expected = {
             "L1": {"lite": "lite", "standard": "standard", "full": "full"},
@@ -153,6 +180,7 @@ class WorkflowProfileTests(unittest.TestCase):
             ("L1", "standard", "standard", None),
             ("L1", "lite", "lite", None),
             ("L2", "lite", "standard", "L2 最低允許 standard"),
+            ("L3", "standard", "full", "L3 最低允許 full"),
         )
         with tempfile.TemporaryDirectory() as directory:
             for index, (lane, requested, effective, reason) in enumerate(fixtures):
@@ -160,6 +188,7 @@ class WorkflowProfileTests(unittest.TestCase):
                     path = Path(directory) / f"state-{index}.json"
                     path.write_text(json.dumps({
                         "task": f"task-{index}",
+                        "cwd": "/tmp/example-repo",
                         "lane": lane,
                         "requested_profile": requested,
                         "effective_profile": effective,
@@ -171,6 +200,32 @@ class WorkflowProfileTests(unittest.TestCase):
                         result["requested_profile"], result["effective_profile"], result["next_action"],
                         result["continued_from_state"],
                     ))
+
+    def test_continue_state_rejects_incomplete_or_inconsistent_profiles(self) -> None:
+        base = {
+            "task": "task",
+            "cwd": "/tmp/example-repo",
+            "lane": "L2",
+            "requested_profile": "lite",
+            "effective_profile": "standard",
+            "profile_upgrade_reason": "L2 最低允許 standard",
+            "next_action": "continue gate",
+        }
+        cases = (
+            ("missing", {key: value for key, value in base.items() if key != "effective_profile"}, "L2", "缺少必要欄位"),
+            ("lane-mismatch", {**base, "lane": "L1"}, "L2", "lane 與 --lane 不一致"),
+            ("downgrade", {**base, "lane": "L1", "requested_profile": "full", "effective_profile": "standard", "profile_upgrade_reason": "bad"}, "L1", "不得把 requested profile 降級"),
+            ("below-floor", {**base, "effective_profile": "lite", "profile_upgrade_reason": None}, "L2", "低於 lane 下限"),
+            ("missing-reason", {**base, "profile_upgrade_reason": "  "}, "L2", "必須保存原因"),
+            ("empty-next", {**base, "next_action": "  "}, "L2", "缺少 next_action"),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            for name, state, lane, error in cases:
+                with self.subTest(name=name):
+                    path = Path(directory) / f"{name}.json"
+                    path.write_text(json.dumps(state), encoding="utf-8")
+                    result = run("plan", "--lane", lane, "--mode", "continue", "--state", str(path), expected=2)
+                    self.assertIn(error, result["error"])
 
     def test_verifier_is_an_executable_mechanical_role(self) -> None:
         verifier = run("resolve", "--lane", "L2", "--role", "verifier")
@@ -194,6 +249,16 @@ class WorkflowProfileTests(unittest.TestCase):
         self.assertIn("只在 effective Full", guides["qa"])
         self.assertIn("只在 effective Full", guides["pm"])
         self.assertIn("Standard／Lite", guides["verifier"])
+        for marker in ("Lite → verifier", "Standard → reviewer", "Full → reviewer"):
+            self.assertIn(marker, guides["architect"])
+        for marker in ("mcp__playwright__browser_take_screenshot", "playwright-lock.sh acquire", "Local → dev", "evidence/"):
+            self.assertIn(marker, guides["verifier"])
+
+    def test_state_template_contains_continue_profile_contract(self) -> None:
+        state = json.loads((ROOT / "state/TEMPLATE.json").read_text(encoding="utf-8"))
+        required = {"cwd", "lane", "requested_profile", "effective_profile", "profile_upgrade_reason", "next_action"}
+        self.assertEqual(set(), required - state.keys())
+        self.assertEqual("run verifier", state["next_action"])
 
     def test_agent_guides_never_require_full_knowledge_index_load(self) -> None:
         forbidden = "Read `~/.codex/knowledge/INDEX.md`"

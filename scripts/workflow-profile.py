@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-import shlex
 import sys
 
 
@@ -48,32 +47,43 @@ def classify(args: argparse.Namespace) -> dict:
     return {"policy_version": 2, "lane": lane, "reason": reason, "risks": risks, "denied": denied}
 
 
-def parse_dev(args: argparse.Namespace) -> dict:
-    """解析 `$dev` modifiers；自然語言入口只套用預設 Standard。"""
-    raw = args.input.strip()
-    if not raw:
-        raise ValueError("開發需求不得為空")
-    try:
-        tokens = shlex.split(raw)
-    except ValueError as exc:
-        raise ValueError(f"指令引號無法解析：{exc}") from exc
-    if not tokens:
-        raise ValueError("開發需求不得為空")
+def next_word(raw: str, cursor: int) -> tuple[str | None, int, int]:
+    """只辨識空白分隔的前導字；需求本體不做 shell tokenization。"""
+    length = len(raw)
+    while cursor < length and raw[cursor].isspace():
+        cursor += 1
+    if cursor == length:
+        return None, cursor, cursor
+    end = cursor
+    while end < length and not raw[end].isspace():
+        end += 1
+    return raw[cursor:end], cursor, end
 
-    explicit_dev = tokens[0] == "$dev"
+
+def parse_dev(args: argparse.Namespace) -> dict:
+    """解析 `$dev` 前導 modifiers，並逐字保留剩餘需求。"""
+    source = sys.stdin.read() if args.stdin else args.input
+    if source is None or not source.strip():
+        raise ValueError("開發需求不得為空")
+    raw = source.lstrip()
+
+    explicit_dev = raw.startswith("$dev") and (len(raw) == len("$dev") or raw[len("$dev")].isspace())
     if not explicit_dev:
         return {
             "policy_version": 2,
             "entrypoint": "natural_language",
             "mode": "standard",
             "requested_profile": "standard",
-            "request": raw,
+            "request": source.strip(),
             "continue_slug": None,
         }
 
-    tokens = tokens[1:]
-    if tokens and tokens[0] == "繼續":
-        if len(tokens) != 2:
+    cursor = len("$dev")
+    first, _, first_end = next_word(raw, cursor)
+    if first == "繼續":
+        slug, _, slug_end = next_word(raw, first_end)
+        extra, _, _ = next_word(raw, slug_end)
+        if slug is None or extra is not None:
             raise ValueError("接續語法必須是 `$dev 繼續 <slug>`")
         return {
             "policy_version": 2,
@@ -81,15 +91,19 @@ def parse_dev(args: argparse.Namespace) -> dict:
             "mode": "continue",
             "requested_profile": None,
             "request": None,
-            "continue_slug": tokens[1],
+            "continue_slug": slug,
         }
 
     requested_profile = "standard"
     mode = "standard"
     seen_profile = False
     seen_auto = False
-    while tokens and tokens[0] in {*PROFILES, "auto"}:
-        modifier = tokens.pop(0)
+    request_start = len(raw)
+    while True:
+        modifier, token_start, token_end = next_word(raw, cursor)
+        if modifier not in {*PROFILES, "auto"}:
+            request_start = token_start
+            break
         if modifier == "auto":
             if seen_auto:
                 raise ValueError("auto modifier 不得重複")
@@ -100,14 +114,16 @@ def parse_dev(args: argparse.Namespace) -> dict:
                 raise ValueError("workflow profile 不得重複")
             seen_profile = True
             requested_profile = modifier
-    if not tokens:
+        cursor = token_end
+    request = raw[request_start:]
+    if not request.strip():
         raise ValueError("`$dev` 後必須提供需求文字")
     return {
         "policy_version": 2,
         "entrypoint": "dev",
         "mode": mode,
         "requested_profile": requested_profile,
-        "request": " ".join(tokens),
+        "request": request,
         "continue_slug": None,
     }
 
@@ -172,6 +188,12 @@ def load_continue_state(path: str, lane: str) -> tuple[str, str, str | None, dic
         raise ValueError("continue state 無法讀取") from exc
     if not isinstance(state, dict):
         raise ValueError("continue state 必須是 JSON object")
+    required = ("cwd", "lane", "requested_profile", "effective_profile", "profile_upgrade_reason", "next_action")
+    missing = [field for field in required if field not in state]
+    if missing:
+        raise ValueError(f"continue state 缺少必要欄位：{','.join(missing)}")
+    if not isinstance(state["cwd"], str) or not state["cwd"].strip():
+        raise ValueError("continue state cwd 不得為空")
     if state.get("lane") != lane:
         raise ValueError("continue state lane 與 --lane 不一致")
     requested = state.get("requested_profile")
@@ -183,8 +205,13 @@ def load_continue_state(path: str, lane: str) -> tuple[str, str, str | None, dic
         raise ValueError("continue state 不得把 requested profile 降級")
     if PROFILE_RANK[effective] < PROFILE_RANK[LANE_PROFILE_FLOOR[lane]]:
         raise ValueError("continue state effective profile 低於 lane 下限")
+    expected_effective, _ = effective_profile(lane, requested)
+    if effective != expected_effective:
+        raise ValueError("continue state effective profile 與 lane/requested 的確定性結果不一致")
     if requested != effective and (not isinstance(reason, str) or not reason.strip()):
         raise ValueError("continue state 發生升級時必須保存原因")
+    if requested == effective and reason is not None:
+        raise ValueError("continue state 未升級時 profile_upgrade_reason 必須為 null")
     if not isinstance(state.get("next_action"), str) or not state["next_action"].strip():
         raise ValueError("continue state 缺少 next_action")
     return requested, effective, reason, state
@@ -283,7 +310,9 @@ def parser() -> argparse.ArgumentParser:
     lane.add_argument("--rollbackable", action="store_true")
     lane.add_argument("--target", choices=("local", "dev", "prod", "unknown"), default="unknown")
     parse_parser = subparsers.add_parser("parse")
-    parse_parser.add_argument("--input", required=True)
+    parse_input = parse_parser.add_mutually_exclusive_group(required=True)
+    parse_input.add_argument("--input", help="以單一 argv 傳入原始需求")
+    parse_input.add_argument("--stdin", action="store_true", help="由標準輸入讀取原始需求")
     resolve_parser = subparsers.add_parser("resolve")
     resolve_parser.add_argument("--lane", choices=("L1", "L2", "L3"), required=True)
     resolve_parser.add_argument("--role", choices=sorted(ROLES), required=True)

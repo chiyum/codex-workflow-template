@@ -11,7 +11,7 @@
   "mode": "auto",
   "requested_profile": "lite",
   "effective_profile": "standard",
-  "profile_upgrade_reason": "L2 minimum profile is standard",
+  "profile_upgrade_reason": "L2 最低允許 standard；已由 requested lite 升級",
   "current_step": "2",
   "next_action": "run verifier",
   "status": "running",

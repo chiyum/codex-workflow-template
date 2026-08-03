@@ -15,7 +15,7 @@ description: 支援 Full／Standard／Lite profile、獨立 auto 模式、lane �
 - `$dev <需求>` 與未指定 profile 的自然語言請求預設 Standard。
 - `$dev 繼續 <slug>` 讀 state 的 effective profile 與 `next_action` 接續，不重新套用預設值。
 
-以 `workflow-profile.py parse --input '<原始輸入>'` 解析 modifier。新任務再執行 `workflow-profile.py plan --lane <lane> --mode <auto|standard> --profile <profile>`；接續任務執行 `workflow-profile.py plan --lane <state lane> --mode continue --state <state path>`。
+以 `workflow-profile.py parse` 解析 modifier。優先透過執行工具的 stdin 欄位把原始輸入直接傳給 `workflow-profile.py parse --stdin`；若呼叫端使用 argv，則把完整原文作為單一 `--input` argv。禁止把原文插入 shell command、shell 單引號或未受控 heredoc，避免 `$()`、`;` 與引號被 shell 解讀。新任務再執行 `workflow-profile.py plan --lane <lane> --mode <auto|standard> --profile <profile>`；接續任務執行 `workflow-profile.py plan --lane <state lane> --mode continue --state <state path>`。
 
 ## Profile gate
 

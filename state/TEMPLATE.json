@@ -1,9 +1,14 @@
 {
   "task": "example-task",
   "product": "sample_product",
+  "cwd": "/absolute/path/to/repo",
+  "lane": "L2",
+  "mode": "standard",
+  "requested_profile": "lite",
+  "effective_profile": "standard",
+  "profile_upgrade_reason": "L2 最低允許 standard；已由 requested lite 升級",
   "current_step": "0",
-  "next_action": "凍結驗收清單",
+  "next_action": "run verifier",
   "status": "running",
   "updated_at": 0
 }
-
