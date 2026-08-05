@@ -11,8 +11,10 @@
 - `$dev full <需求>`：PM → architect → reviewer → QA → PM。
 - `$dev standard <需求>`：verifier → architect → reviewer → 同一 verifier；未指定 profile 時的預設。
 - `$dev lite <需求>`：architect 自測 → verifier。
-- profile 後可加 `auto`，只略過第一次確認；既有 `$dev auto <需求>` 等於 Standard auto。
+- profile 後可加 `auto`；所有 code 新任務仍先由使用者確認凍結，`auto` 只在凍結後自主執行。既有 `$dev auto <需求>` 等於 Standard auto。
 - `$dev 繼續 <slug>` 沿用 state 的 effective profile。L1 可用三種，L2 至少 Standard，L3 強制 Full。
+
+凍結前把新想到的內容分成「需求內必要細節／必要安全或正確性條件／可選改善」。可選改善未獲使用者確認，不得進 acceptance、code 或 blocker；凍結後只有純內部、且不改使用者可見行為、範圍、驗收、風險或成本的實作選擇可自主決定。
 
 永遠排除 auth、secrets、env、webhook、sessions、history、logs、SQLite、cache、MCP runtime、shell snapshots、models cache、installation id、plugin cache、OpenAI `.system` skills，以及 Memories 生成內容、database 與 runtime state。第三方 MCP 或插件屬選配，請自行安裝並讓所有相依元件使用一致版本。
 

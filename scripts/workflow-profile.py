@@ -282,7 +282,7 @@ def plan(args: argparse.Namespace) -> dict:
         "requested_profile": requested,
         "effective_profile": effective,
         "profile_upgrade_reason": upgrade_reason,
-        "confirmation_required": args.mode == "standard",
+        "confirmation_required": args.mode != "continue",
         "pre_review": "targeted" if args.lane == "L1" else "full",
         "specialized_gates": list(SPECIALIZED_GATES),
         "mandatory_interruptions": list(MANDATORY_INTERRUPTIONS),

@@ -140,15 +140,16 @@ class WorkflowProfileTests(unittest.TestCase):
                     else:
                         self.assertTrue(result["profile_upgrade_reason"].strip())
 
-    def test_auto_changes_confirmation_not_profile_or_gates(self) -> None:
-        ignored = {"mode", "confirmation_required"}
+    def test_auto_and_standard_require_confirmation_with_identical_contract(self) -> None:
+        ignored = {"mode"}
         for lane in ("L1", "L2", "L3"):
             for profile in ("lite", "standard", "full"):
                 with self.subTest(lane=lane, profile=profile):
                     standard = run("plan", "--lane", lane, "--mode", "standard", "--profile", profile)
                     autonomous = run("plan", "--lane", lane, "--mode", "auto", "--profile", profile)
                     self.assertTrue(standard["confirmation_required"])
-                    self.assertFalse(autonomous["confirmation_required"])
+                    # Mutation guard：auto 是新任務，不能退回成略過凍結確認。
+                    self.assertTrue(autonomous["confirmation_required"])
                     self.assertEqual(
                         {key: value for key, value in standard.items() if key not in ignored},
                         {key: value for key, value in autonomous.items() if key not in ignored},
@@ -176,30 +177,31 @@ class WorkflowProfileTests(unittest.TestCase):
 
     def test_continue_uses_effective_profile_from_state(self) -> None:
         fixtures = (
-            ("L1", "full", "full", None),
-            ("L1", "standard", "standard", None),
             ("L1", "lite", "lite", None),
             ("L2", "lite", "standard", "L2 最低允許 standard"),
             ("L3", "standard", "full", "L3 最低允許 full"),
         )
         with tempfile.TemporaryDirectory() as directory:
-            for index, (lane, requested, effective, reason) in enumerate(fixtures):
-                with self.subTest(lane=lane, requested=requested, effective=effective):
-                    path = Path(directory) / f"state-{index}.json"
-                    path.write_text(json.dumps({
-                        "task": f"task-{index}",
-                        "cwd": "/tmp/example-repo",
-                        "lane": lane,
-                        "requested_profile": requested,
-                        "effective_profile": effective,
-                        "profile_upgrade_reason": reason,
-                        "next_action": "continue gate",
-                    }), encoding="utf-8")
-                    result = run("plan", "--lane", lane, "--mode", "continue", "--state", str(path))
-                    self.assertEqual((requested, effective, "continue gate", True), (
-                        result["requested_profile"], result["effective_profile"], result["next_action"],
-                        result["continued_from_state"],
-                    ))
+            for origin_mode in ("standard", "auto"):
+                for index, (lane, requested, effective, reason) in enumerate(fixtures):
+                    with self.subTest(origin_mode=origin_mode, lane=lane, requested=requested, effective=effective):
+                        path = Path(directory) / f"state-{origin_mode}-{index}.json"
+                        path.write_text(json.dumps({
+                            "task": f"task-{origin_mode}-{index}",
+                            "cwd": "/tmp/example-repo",
+                            "lane": lane,
+                            "mode": origin_mode,
+                            "requested_profile": requested,
+                            "effective_profile": effective,
+                            "profile_upgrade_reason": reason,
+                            "next_action": "continue gate",
+                        }), encoding="utf-8")
+                        result = run("plan", "--lane", lane, "--mode", "continue", "--state", str(path))
+                        # Mutation guard：只有已凍結的 continue 不重複要求確認。
+                        self.assertEqual((requested, effective, "continue gate", True, False), (
+                            result["requested_profile"], result["effective_profile"], result["next_action"],
+                            result["continued_from_state"], result["confirmation_required"],
+                        ))
 
     def test_continue_state_rejects_incomplete_or_inconsistent_profiles(self) -> None:
         base = {

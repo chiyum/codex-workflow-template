@@ -11,8 +11,8 @@
 ## 標準鏈
 
 1. 載入 `products/INDEX.md` 與命中的產品配置、規格及 knowledge playbook。
-2. 先用 resolver 判定 L1–L3 與 effective profile。L1 可用三種 profile，L2 至少 Standard，L3 強制 Full；profile 只升不降，`auto` 只改確認模式。
-3. Full 走 PM→architect→reviewer→QA→PM；Standard 走 verifier→architect→reviewer→同一 verifier；Lite 走 architect 自測→verifier。只有 architect 寫 code 並同步測試、規格與必要 ADR。
+2. 先用 resolver 判定 L1–L3 與 effective profile。L1 可用三種 profile，L2 至少 Standard，L3 強制 Full；profile 只升不降。所有 code 新任務都先由使用者確認凍結；`auto` 只改凍結後的確認模式。
+3. Full 走 PM→architect→reviewer→QA→PM；Standard 走 verifier→architect→reviewer→同一 verifier；Lite 走 architect 自測→verifier。所有自主開發都先討論細節並由使用者確認凍結，再進入自主執行。只有 architect 寫 code 並同步測試、規格與必要 ADR。
 4. 依 plan 跑 targeted/full pre-review 與角色 gate。Lite 不開 reviewer，Standard 不開 QA/PM，Full 保留完整獨立角色。實質退修不設輪數上限；三次只限制無新證據、無狀態改變的同一操作。
 5. 每條 acceptance 都要有實測證據；Standard/Lite 由 verifier 合併 QA 與 PM 責任，Full 由獨立 QA/PM。security/design 等命中式專項 gate 不受 profile 影響。
 6. 本地 gate 全綠後才依產品配置 push；是否碰測試環境或正式環境仍受產品政策與使用者授權限制。
@@ -35,6 +35,8 @@
 ## 權限護欄
 
 可自動做安全、可逆、任務內的讀取、修改、測試、commit 與已授權發布。遇到不可逆刪除、付費、主動資安掃描、正式環境操作、需求矛盾或機密即將進入公開歷史，必須停下取得明確授權。
+
+開發前把新想到的細節分成「需求內必要細節／必要安全或正確性條件／可選改善」一起討論並凍結。可選改善未獲使用者明確同意，不得進 acceptance、code 或 blocker。凍結後純內部且不改使用者可見行為、範圍、驗收、風險或成本的實作選擇可自主決定；超出者先提案，必要變更則回到凍結確認。
 
 ## 產品與機密
 

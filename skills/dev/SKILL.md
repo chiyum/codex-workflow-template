@@ -10,7 +10,7 @@ description: 支援 Full／Standard／Lite profile、獨立 auto 模式、lane �
 ## 語法
 
 - `$dev full <需求>`、`$dev standard <需求>`、`$dev lite <需求>`：選擇 requested profile。
-- profile 後可加 `auto`；它只略過步驟 0 的確認，不改 profile。
+- profile 後可加 `auto`；所有 code 新任務仍先確認凍結，`auto` 只讓凍結後的範圍內決策不停等，不改 profile。
 - 既有 `$dev auto <需求>` 等於 Standard + auto。
 - `$dev <需求>` 與未指定 profile 的自然語言請求預設 Standard。
 - `$dev 繼續 <slug>` 讀 state 的 effective profile 與 `next_action` 接續，不重新套用預設值。
@@ -25,4 +25,8 @@ description: 支援 Full／Standard／Lite profile、獨立 auto 模式、lane �
 
 L1 可用三種 profile；L2 至少 Standard；L3 強制 Full。只能升級，不能降級。security/design 等命中式專項 gate 一律保留。
 
-auto 與一般模式都只能在不可逆刪除、付費、資安、正式環境或需求矛盾時中斷。每個 gate 轉換更新 state；最終回報逐條證據、commit、發布狀態、決策與最短複驗。
+## 凍結與自主邊界
+
+所有 code 新任務都先把需求內必要細節、必要安全或正確性條件、可選改善分開呈現，由使用者確認後凍結。可選改善未獲明確同意，不得進 acceptance、code 或 blocker；`auto` 從凍結完成後才自主執行。
+
+凍結後純內部且不改使用者可見行為、範圍、驗收、風險或成本的選擇可自主決定。新想到的可選改善只記錄；若完成任務必須改已凍結邊界，或涉及不可逆刪除、付費、資安、正式環境、需求矛盾，必須中斷並重新確認。每個 gate 轉換更新 state；最終回報逐條證據、commit、發布狀態、決策與最短複驗。

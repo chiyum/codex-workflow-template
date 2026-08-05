@@ -4,16 +4,22 @@
 
 先執行 `scripts/workflow-profile.py parse`、`lane` 與 `plan`，不得只憑文字感覺決定流程。L1 必須同時滿足：1–3 條 acceptance、單 repo、可回滾、目標 local/dev，且未命中高風險 deny list；auth、權限、租戶、DB、migration、資料一致性、跨 repo contract、基礎設施、金流、不可逆、prod、重大架構或全新視覺任一命中即 L3，其餘為 L2。
 
-L1 可保留 Lite/Standard/Full，L2 至少 Standard，L3 強制 Full。requested profile 只可保留或升級；`auto` 只略過凍結前確認，不改 profile。Full 由 PM 產出 acceptance，Standard 由 verifier 產出，Lite 由主 Codex 產出。大型自主工作再加任務憲章；凍結後所有 agent 只能照清單做。`$rapid` 只有明確觸發才使用，不能由 L1 或 Lite 自動切換。
+L1 可保留 Lite/Standard/Full，L2 至少 Standard，L3 強制 Full。requested profile 只可保留或升級。所有 code 新任務都先由使用者確認凍結；`auto` 不略過步驟 0，只表示凍結後在已確認範圍內自主執行，不改 profile。
+
+Full 由 PM 產出 acceptance，Standard 由 verifier 產出，Lite 由主 Codex 產出。凍結前先把細節分成「需求內必要細節／必要安全或正確性條件／可選改善」呈現；可選改善未獲使用者明確同意，不得進 acceptance、code 或 blocker。必要安全或正確性條件須說明原因與影響後一起確認。
+
+清單呈現給使用者確認後凍結，開發期間任何 agent 不得修改；純讀取／非 code 修改可略過。大型自主工作再加任務憲章，列出範圍、非目標、細節決策、預授權決策與必問白名單。`$rapid` 只有明確觸發才使用，不能由 L1 或 Lite 自動切換。
 
 ## 1. architect 實作
 
 architect 先讀產品配置與 knowledge 索引，再判斷：
 
 - 小／中改：說明思路後直接實作。
-- 大改：比較三個真正不同的方案，包含架構、範圍、優缺點、風險、回滾與測試；自主模式採推薦方案並記錄理由。
+- 大改：比較三個真正不同的方案，包含架構、範圍、優缺點、風險、回滾與測試。凍結後的自主模式只有在推薦方案不改使用者可見行為、範圍、驗收、風險或成本時才可採用並記錄理由；超出邊界須回到步驟 0 確認。
 
 實作必須同批更新測試、受影響規格與達 ADR 門檻的決策。只有 architect 寫產品程式碼，完成後以清楚的 commit message 提交。
+
+凍結後純內部且不改使用者可見行為、範圍、驗收、風險或成本的實作選擇可自主決定。新想到的可選改善只記錄，不得實作或設為 blocker；從需求推衍、且會改變資料可見範圍、權限／篩選、預設值或 UI 行為的決策，必須另經使用者確認。
 
 每次派遣前用 `scripts/workflow-profile.py resolve` 取得 model、effort 與 bounded/no-history fork。main 預設 Sol/medium；test/QA 採 Terra low/medium；`xhigh` 只限先說明理由的 L2/L3 單一 architect/reviewer 葉。Luna/max 不自動啟用。同任務退修優先 follow-up 重用原 agent，只傳 finding、diff 與新證據。
 
