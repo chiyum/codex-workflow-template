@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """retro-digest.py — 自我複盤迴圈的確定性彙整腳本
 
-把「上次複盤之後」的 run 遙測 verdict、新增知識卡、新增 ADR 索引成一份 digest，
+把「上次複盤之後」的 run 遙測 verdict、新增知識卡／流程提案、新增 ADR 索引成一份 digest，
 供 /retro skill 分析用。只讀取彙整，不做任何分析與修改。
 
 用法：
@@ -11,7 +11,7 @@
 
 設計原則：
   - 不存計數器，一律從 .last-retro 時間戳推導，避免計數漂移
-  - 沒有 verdict 的 run 不計入門檻（問了不追，使用者補評後自然計入）
+  - 沒有 verdict 的 run 不計入門檻（問了不追，使用者 補評後自然計入）
 """
 import argparse, glob, json, os, sys, time
 
@@ -19,6 +19,8 @@ HOME = os.path.expanduser("~")
 RUNS_DIR = os.path.join(HOME, ".codex", "run-metrics", "runs")
 KNOWLEDGE_DIR = os.path.join(HOME, ".codex", "knowledge")
 MARKER = os.path.join(HOME, ".codex", "run-metrics", ".last-retro")
+GOVERNANCE_FILES = frozenset({"INDEX.md", "README.md", "ROUTER.md", "SHARED_CONTEXT_POLICY.md"})
+EXCLUDED_DIRS = frozenset({"archive", "playbooks"})
 
 
 def last_retro_ts():
@@ -46,10 +48,14 @@ def pending_runs(since):
 
 
 def new_knowledge_cards(since):
-    """上次複盤後新增/更新的知識卡（排除 INDEX 與 playbooks 目錄）"""
+    """上次複盤後新增/更新的根層知識卡與 harness 提案。"""
     out = []
-    for p in sorted(glob.glob(os.path.join(KNOWLEDGE_DIR, "*.md"))):
-        if os.path.basename(p) == "INDEX.md":
+    candidates = glob.glob(os.path.join(KNOWLEDGE_DIR, "*.md"))
+    candidates.extend(glob.glob(os.path.join(KNOWLEDGE_DIR, "harness", "**", "*.md"), recursive=True))
+    for p in sorted(set(candidates)):
+        relative_path = os.path.relpath(p, KNOWLEDGE_DIR)
+        parts = relative_path.split(os.sep)
+        if os.path.basename(p) in GOVERNANCE_FILES or EXCLUDED_DIRS.intersection(parts):
             continue
         if os.path.getmtime(p) > since:
             out.append(p)
@@ -96,9 +102,9 @@ def main():
         print(line)
 
     cards = new_knowledge_cards(since)
-    print(f"\n## 期間新增/更新的知識卡（{len(cards)} 張）")
+    print(f"\n## 期間新增/更新的知識卡／流程提案（{len(cards)} 張）")
     for p in cards:
-        print(f"- {os.path.basename(p)}")
+        print(f"- {os.path.relpath(p, KNOWLEDGE_DIR)}")
 
     print("\n## 提示")
     print("- ADR 散在各 repo docs/adr/，analysis 時針對 digest 中提到的專案抽查即可，不全掃")

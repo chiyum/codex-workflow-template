@@ -39,7 +39,7 @@ state 至少記 task/product/cwd/kind/target_environment/current_stage/retry_sco
 
 ### 2. Architect 最小修補
 
-交付原始需求、凍結卡、基準、repo 與範圍；只做最小可回滾修補、最近測試與必要規格同步，以繁中 commit。需要 ADR 代表 gate 判錯，停止轉 `$dev`。
+交付原始需求、凍結卡、基準、repo 與範圍；只做最小可回滾修補、最近測試與必要規格同步，以繁中 commit。architect 用一至兩行標記 `root_fix／containment／workaround／external_limitation`；後三者只有凍結 rapid acceptance 允許時可採用，且不得冒充根因已修復。需要 ADR、根因仍模糊或方案核心假設失效代表 gate 判錯，停止轉 `$dev`。
 
 ### 3. Targeted pre-review
 
@@ -59,9 +59,9 @@ state 至少記 task/product/cwd/kind/target_environment/current_stage/retry_sco
 
 ### 6. 收尾
 
-state 標 done；回報 R1–R3 證據、commit/push/dev/version、rollback 與三步複驗。只完成 local commit 必須寫「尚未發布」。收 metrics 時傳 `--risk-lane L1` 與 resolver 的 requested main profile。
+state 標 done；回報 R1–R3 證據、commit/push/dev/version、rollback 與三步複驗。另按主要功能路徑交代「改動前 vs. 改動後」：前後各有白話與專業術語，並涵蓋實際功能、效能／延遲、系統負荷、資料一致性／失敗模式與維運差異；量化宣稱附本次量測證據，未量測則明標方向性影響。若有範圍內自主決策，逐項說明原因、未採方案、優點與缺點／代價；沒有則明寫「無」。只完成 local commit 必須寫「尚未發布」。收 metrics 時傳 `--risk-lane L1` 與 resolver 的 requested main profile。
 
 ## 三次保險絲
 
-只有零新證據、零狀態變化、同一操作原樣三次仍同結果才停止該操作並換方法；實質修正後重驗不計次。使用者改需求時停止原任務並重新做 rapid eligibility，不改寫已凍結卡。
+每次失敗標記 `closer／same／worse`；前兩次皆為 `same／worse` 時，下一次必須先說明要取得的新資訊，否則直接換觀測或方法。只有零新證據、零狀態變化、同一操作原樣三次仍同結果才命中硬上限；實質修正後重驗不計次。使用者改需求時停止原任務並重新做 rapid eligibility，不改寫已凍結卡。
 

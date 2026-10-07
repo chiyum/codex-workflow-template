@@ -4,9 +4,9 @@
 # 注意: 本腳本在【目標產品 repo】的根目錄執行，而非本配置庫
 #       用法示例（於產品 repo 根目錄）: bash ~/.codex/scripts/pre-review.sh
 #
-# 成長制度: 知識庫（knowledge/）每新增一張坑卡時，評估「此模式能否規則化」，
-#           能則把規則追加到本腳本，或追加到各產品 repo 根目錄的 .pre-review-extra.sh，
-#           逐步把「靠 reviewer 記得」升級為「靠腳本保證」。不要去改 knowledge/ 既有檔案。
+# 成長制度: 依 knowledge/README.md 先查相同根因與適用條件，優先合併既有卡；
+#           確有必要的流程改善只先作提案，不會自動成為本腳本或產品的 gate。
+#           只有經適用需求凍結與核准後，才修改 pre-review 規則或產品額外檢查。
 
 FAIL=0
 
@@ -56,4 +56,3 @@ if [ "$FAIL" -eq 1 ]; then
 fi
 echo "✅ pre-review 通過，進入 reviewer 審查"
 exit 0
-

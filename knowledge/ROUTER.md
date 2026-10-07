@@ -1,6 +1,6 @@
 # 工程知識庫短路由
 
-日常 agent 只讀本檔，再讀命中的 playbook；不要完整載入大型 `INDEX.md`。沒有命中 playbook 時，以 `rg -n '<技術|問題類別>' ~/.codex/knowledge/INDEX.md ~/.codex/knowledge/*.md` 找 1–3 張卡。`INDEX.md` 僅供 retro、全域盤點與新增卡更新索引。
+寫入、查重、status 證據與 harness 分流規則見 `README.md`。日常 agent 先以 `problem-class` 與 `tech` 查找，再讀本檔命中的 playbook；不要完整載入大型 `INDEX.md`。沒有命中 playbook 時，以 `rg -n '<技術|問題類別>' ~/.codex/knowledge/INDEX.md ~/.codex/knowledge/*.md` 找 1–3 張卡。`INDEX.md` 僅供 retro、全域盤點與新增卡更新索引。
 
 | 技術域／訊號 | 先讀 |
 |---|---|
@@ -9,4 +9,4 @@
 | mutation、rollback、fixture cleanup | `mutation-restore-must-be-scoped.md` |
 | Bash、macOS、全形字元、unbound variable | `bash-variable-before-nonascii-needs-braces.md` |
 
-新增知識卡或 playbook 時仍依 `INDEX.md` 開頭的成長規則同步索引；本 router 只在新增技術域 playbook 時加一列。
+新增或合併知識卡時依 `README.md` 先查再併並同步索引；本 router 只在新增技術域 playbook 時加一列。

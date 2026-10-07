@@ -1,3 +1,6 @@
-# 公開範本不硬編碼使用者的 source repo 絕對路徑。
-# live 使用者可設定 CODEX_WORKFLOW_SOURCE 供 run metrics 記錄 config commit。
+# 制度只有一個 active Git source：目前 CODEX_HOME 本身；run metrics 直接讀其 Git identity。
+# 公開範本不硬編碼使用者的絕對路徑。
+schema_version = "codex-workflow-source/v1"
 repository = ""
+branch = "main"
+remote = "origin"

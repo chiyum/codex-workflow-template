@@ -1,0 +1,6 @@
+interface:
+  display_name: "現場急修"
+  short_description: "以獨立快線完成可回滾、可快速驗證的現場 Bug 與小型修改需求"
+  default_prompt: "請使用 $rapid，透過獨立急修快線處理這個邊界明確的現場 Bug 或小型修改。"
+policy:
+  allow_implicit_invocation: false

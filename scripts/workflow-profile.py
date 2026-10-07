@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 from pathlib import Path
+import re
 import sys
 
 
 HIGH_RISK = {
     "auth", "permission", "tenant", "database", "migration", "data-consistency",
-    "cross-repo-contract", "infrastructure", "payment", "irreversible", "prod",
+    "cross-repo-contract", "infrastructure", "payment", "irreversible",
     "major-architecture", "new-visual",
 }
 ROLES = {
@@ -21,12 +24,43 @@ PROFILES = ("lite", "standard", "full")
 PROFILE_RANK = {profile: rank for rank, profile in enumerate(PROFILES)}
 LANE_PROFILE_FLOOR = {"L1": "lite", "L2": "standard", "L3": "full"}
 SPECIALIZED_GATES = (
-    "security_auditor_when_triggered",
     "ui_designer_and_design_reviewer_when_triggered",
 )
 MANDATORY_INTERRUPTIONS = (
     "irreversible_delete", "spending", "security", "prod", "contradictory_requirements",
 )
+REQUIRED_CODEX_VALIDATIONS = ("lint", "build", "test", "pre_review")
+RELEASE_TARGETS = ("local", "dev", "prod", "unknown")
+PRODUCT_POLICY_STATUSES = ("known", "missing", "unknown")
+SECURITY_REVIEW_SURFACES = {"auth", "permission", "tenant", "external-input"}
+SECURITY_AUDITOR_SURFACES = {
+    "port", "proxy", "container", "pipeline", "database-exposure", "redis-exposure",
+}
+CHANGE_SURFACES = tuple(sorted({
+    "ui", *SECURITY_REVIEW_SURFACES, *SECURITY_AUDITOR_SURFACES, "external-scan",
+}))
+SHA = re.compile(r"^[0-9a-f]{40,64}$")
+BASELINE_FRESHNESS = timedelta(hours=24)
+
+
+def validation_manifest(lane: str, effective_profile: str, pre_review: str) -> dict:
+    source = Path(__file__).resolve()
+    manifest = {
+        "schema_version": "codex-validation-manifest/v1",
+        "policy_version": 3,
+        "source_path": "scripts/workflow-profile.py",
+        "source_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+        "lane": lane,
+        "effective_profile": effective_profile,
+        "pre_review": pre_review,
+        "required_validations": list(REQUIRED_CODEX_VALIDATIONS),
+        "test_scope": "diff_acceptance_and_nearest_required_sentinels",
+        "full_site_authorized": False,
+    }
+    manifest["manifest_sha256"] = hashlib.sha256(
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return manifest
 
 
 def classify(args: argparse.Namespace) -> dict:
@@ -39,12 +73,37 @@ def classify(args: argparse.Namespace) -> dict:
         and 1 <= args.acceptance_count <= 3
         and args.single_repo
         and args.rollbackable
-        and args.target in {"local", "dev"}
     ):
         lane, reason = "L1", "符合 low-risk 全部必要條件"
     else:
         lane, reason = "L2", "未命中高風險，但不滿足 L1 全部必要條件"
-    return {"policy_version": 2, "lane": lane, "reason": reason, "risks": risks, "denied": denied}
+    return {
+        "policy_version": 3,
+        "lane": lane,
+        "change_lane": lane,
+        "reason": reason,
+        "change_risks": risks,
+        "denied": denied,
+        "release_risk": release_overlay(args.target, "unknown"),
+    }
+
+
+def release_overlay(target: str, policy_status: str) -> dict:
+    gates: list[str] = []
+    direct_prod = target == "prod"
+    if target in {"dev", "prod"}:
+        gates.extend(["release_ancestor", "deployment_version"])
+    if direct_prod:
+        gates.append("user_direct_prod_confirmation")
+    fail_safe = direct_prod and policy_status in {"missing", "unknown"}
+    return {
+        "target": target,
+        "product_policy_status": policy_status,
+        "gates": gates,
+        "direct_prod_requires_confirmation": direct_prod,
+        "fail_safe_full": fail_safe,
+        "unavailable_reason": "product_release_policy_unavailable" if fail_safe else None,
+    }
 
 
 def next_word(raw: str, cursor: int) -> tuple[str | None, int, int]:
@@ -70,10 +129,10 @@ def parse_dev(args: argparse.Namespace) -> dict:
     explicit_dev = raw.startswith("$dev") and (len(raw) == len("$dev") or raw[len("$dev")].isspace())
     if not explicit_dev:
         return {
-            "policy_version": 2,
+            "policy_version": 3,
             "entrypoint": "natural_language",
             "mode": "standard",
-            "requested_profile": "standard",
+            "requested_profile": None,
             "request": source.strip(),
             "continue_slug": None,
         }
@@ -86,7 +145,7 @@ def parse_dev(args: argparse.Namespace) -> dict:
         if slug is None or extra is not None:
             raise ValueError("接續語法必須是 `$dev 繼續 <slug>`")
         return {
-            "policy_version": 2,
+            "policy_version": 3,
             "entrypoint": "dev",
             "mode": "continue",
             "requested_profile": None,
@@ -94,7 +153,7 @@ def parse_dev(args: argparse.Namespace) -> dict:
             "continue_slug": slug,
         }
 
-    requested_profile = "standard"
+    requested_profile = None
     mode = "standard"
     seen_profile = False
     seen_auto = False
@@ -109,6 +168,9 @@ def parse_dev(args: argparse.Namespace) -> dict:
                 raise ValueError("auto modifier 不得重複")
             seen_auto = True
             mode = "auto"
+            if not seen_profile:
+                # `$dev auto` 的舊語義固定為 Standard；一般未指定 profile 則交由 lane floor 決定。
+                requested_profile = "standard"
         else:
             if seen_profile:
                 raise ValueError("workflow profile 不得重複")
@@ -119,7 +181,7 @@ def parse_dev(args: argparse.Namespace) -> dict:
     if not request.strip():
         raise ValueError("`$dev` 後必須提供需求文字")
     return {
-        "policy_version": 2,
+        "policy_version": 3,
         "entrypoint": "dev",
         "mode": mode,
         "requested_profile": requested_profile,
@@ -181,14 +243,155 @@ def effective_profile(lane: str, requested: str) -> tuple[str, str | None]:
     return floor, f"{lane} 最低允許 {floor}；已由 requested {requested} 升級"
 
 
-def load_continue_state(path: str, lane: str) -> tuple[str, str, str | None, dict]:
+def effective_profile_with_release(
+    lane: str, requested: str | None, product_floor: str | None, release: dict,
+) -> tuple[str, str, str | None]:
+    lane_floor = LANE_PROFILE_FLOOR[lane]
+    resolved_requested = requested or lane_floor
+    floor_candidates = [lane_floor]
+    if product_floor is not None:
+        floor_candidates.append(product_floor)
+    if release["fail_safe_full"]:
+        floor_candidates.append("full")
+    effective_floor = max(floor_candidates, key=PROFILE_RANK.__getitem__)
+    effective = max((resolved_requested, effective_floor), key=PROFILE_RANK.__getitem__)
+    if effective == resolved_requested:
+        return resolved_requested, effective, None
+    reasons: list[str] = []
+    if PROFILE_RANK[lane_floor] > PROFILE_RANK[resolved_requested]:
+        reasons.append(f"change lane {lane} floor={lane_floor}")
+    if product_floor is not None and PROFILE_RANK[product_floor] > PROFILE_RANK[resolved_requested]:
+        reasons.append(f"product release floor={product_floor}")
+    if release["fail_safe_full"]:
+        reasons.append("direct prod 缺少可用 product release policy，fail-safe Full")
+    return resolved_requested, effective, "；".join(reasons)
+
+
+def canonical_sha256(value: dict) -> str:
+    return hashlib.sha256(
+        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def parse_fresh_timestamp(value: object, field: str, now: datetime) -> datetime:
+    if not isinstance(value, str):
+        raise ValueError(f"baseline receipt {field} 無效")
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError(f"baseline receipt {field} 無效") from exc
+    if parsed.tzinfo is None:
+        raise ValueError(f"baseline receipt {field} 無效")
+    normalized = parsed.astimezone(timezone.utc)
+    if normalized > now + timedelta(minutes=5) or now - normalized > BASELINE_FRESHNESS:
+        raise ValueError(f"baseline receipt {field} 不新鮮")
+    return normalized
+
+
+def load_baseline_receipt(path: str, expected_target: str) -> dict:
+    receipt_path = Path(path).expanduser().resolve(strict=True)
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError("baseline receipt 無法讀取") from exc
+    if not isinstance(receipt, dict) or receipt.get("schema_version") != "development-baseline/v2":
+        raise ValueError("baseline receipt schema 無效")
+    now = datetime.now(timezone.utc)
+    queried_at = parse_fresh_timestamp(receipt.get("queried_at"), "queried_at", now)
+    if receipt.get("target_environment") != expected_target:
+        raise ValueError("baseline receipt target 與 plan 不一致")
+    product = receipt.get("product")
+    if not isinstance(product, str) or not product.strip():
+        raise ValueError("baseline receipt product 無效")
+    collector = receipt.get("collector_identity")
+    collector_path = Path(__file__).resolve().parent / "development-baseline.py"
+    if (
+        not isinstance(collector, dict)
+        or collector.get("path") != "scripts/development-baseline.py"
+        or not collector_path.is_file()
+        or collector.get("sha256") != hashlib.sha256(collector_path.read_bytes()).hexdigest()
+    ):
+        raise ValueError("baseline receipt collector identity 無效")
+    expected_receipt_sha = receipt.get("receipt_sha256")
+    unsigned = dict(receipt)
+    unsigned.pop("confirmation", None)
+    unsigned.pop("receipt_sha256", None)
+    if not isinstance(expected_receipt_sha, str) or canonical_sha256(unsigned) != expected_receipt_sha:
+        raise ValueError("baseline receipt content hash 無效")
+    confirmation = receipt.get("confirmation")
+    if (
+        not isinstance(confirmation, dict)
+        or set(confirmation) != {"confirmed_by", "confirmed_at", "receipt_sha256"}
+        or confirmation.get("confirmed_by") != "user"
+        or confirmation.get("receipt_sha256") != expected_receipt_sha
+    ):
+        raise ValueError("baseline receipt 缺少 user confirmation")
+    confirmed_at = parse_fresh_timestamp(confirmation.get("confirmed_at"), "confirmed_at", now)
+    if confirmed_at < queried_at:
+        raise ValueError("baseline receipt confirmation 早於查詢")
+    repos = receipt.get("repos")
+    if not isinstance(repos, list) or not repos:
+        raise ValueError("baseline receipt repo identity 無效")
+    repo_identities: list[dict] = []
+    identity_fields = (
+        "path", "branch", "local_head", "remote", "remote_head",
+        "proposed_baseline", "proposed_baseline_tree",
+    )
+    for repo in repos:
+        if not isinstance(repo, dict):
+            raise ValueError("baseline receipt repo identity 無效")
+        identity = {key: repo.get(key) for key in identity_fields}
+        if (
+            not isinstance(identity["path"], str)
+            or not Path(identity["path"]).is_absolute()
+            or not isinstance(identity["branch"], str)
+            or not isinstance(identity["remote"], str)
+            or not SHA.fullmatch(str(identity["local_head"]))
+            or (identity["remote_head"] is not None and not SHA.fullmatch(str(identity["remote_head"])))
+            or not SHA.fullmatch(str(identity["proposed_baseline"]))
+            or not SHA.fullmatch(str(identity["proposed_baseline_tree"]))
+            or repo.get("repo_identity_sha256") != canonical_sha256(identity)
+        ):
+            raise ValueError("baseline receipt repo identity 無效")
+        authority = repo.get("behavior_authority")
+        sources = authority.get("sources") if isinstance(authority, dict) else None
+        if not isinstance(sources, list) or not sources or any(
+            not isinstance(source, dict)
+            or set(source) != {"path", "blob"}
+            or not isinstance(source["path"], str)
+            or source["path"].startswith("/")
+            or ".." in Path(source["path"]).parts
+            or not SHA.fullmatch(str(source["blob"]))
+            for source in sources
+        ):
+            raise ValueError("baseline receipt behavior source identity 無效")
+        repo_identities.append({**identity, "repo_identity_sha256": repo["repo_identity_sha256"]})
+    identity = {
+        "receipt_path": str(receipt_path),
+        "receipt_sha256": expected_receipt_sha,
+        "collector_sha256": collector["sha256"],
+        "queried_at": receipt["queried_at"],
+        "confirmed_at": confirmation["confirmed_at"],
+        "product": product,
+        "target_environment": expected_target,
+        "repos": repo_identities,
+    }
+    identity["identity_sha256"] = canonical_sha256(identity)
+    return identity
+
+
+def load_continue_state(path: str, lane: str) -> tuple[str, str, str | None, dict, dict, str | None, dict]:
     try:
         state = json.loads(Path(path).read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ValueError("continue state 無法讀取") from exc
     if not isinstance(state, dict):
         raise ValueError("continue state 必須是 JSON object")
-    required = ("cwd", "lane", "requested_profile", "effective_profile", "profile_upgrade_reason", "next_action")
+    required = (
+        "cwd", "lane", "requested_profile", "effective_profile", "profile_upgrade_reason",
+        "next_action", "target", "product_policy_status", "product_release_floor",
+        "release_risk", "effective_floor", "baseline_receipt_path", "baseline_receipt_identity",
+    )
     missing = [field for field in required if field not in state]
     if missing:
         raise ValueError(f"continue state 缺少必要欄位：{','.join(missing)}")
@@ -205,16 +408,40 @@ def load_continue_state(path: str, lane: str) -> tuple[str, str, str | None, dic
         raise ValueError("continue state 不得把 requested profile 降級")
     if PROFILE_RANK[effective] < PROFILE_RANK[LANE_PROFILE_FLOOR[lane]]:
         raise ValueError("continue state effective profile 低於 lane 下限")
-    expected_effective, _ = effective_profile(lane, requested)
+    target = state.get("target")
+    policy_status = state.get("product_policy_status")
+    product_floor = state.get("product_release_floor")
+    if target not in RELEASE_TARGETS or policy_status not in PRODUCT_POLICY_STATUSES:
+        raise ValueError("continue state release identity 無效")
+    if product_floor is not None and product_floor not in PROFILES:
+        raise ValueError("continue state product release floor 無效")
+    release = release_overlay(target, policy_status)
+    if state.get("release_risk") != release:
+        raise ValueError("continue state release gates 與確定性結果不一致")
+    requested_expected, expected_effective, expected_reason = effective_profile_with_release(
+        lane, requested, product_floor, release,
+    )
+    if requested_expected != requested:
+        raise ValueError("continue state requested profile 無效")
     if effective != expected_effective:
-        raise ValueError("continue state effective profile 與 lane/requested 的確定性結果不一致")
-    if requested != effective and (not isinstance(reason, str) or not reason.strip()):
-        raise ValueError("continue state 發生升級時必須保存原因")
-    if requested == effective and reason is not None:
-        raise ValueError("continue state 未升級時 profile_upgrade_reason 必須為 null")
+        raise ValueError("continue state effective profile 與完整 plan identity 不一致")
+    if reason != expected_reason:
+        raise ValueError("continue state profile_upgrade_reason 與確定性結果不一致")
+    expected_floor = max(
+        [LANE_PROFILE_FLOOR[lane], product_floor or "lite", "full" if release["fail_safe_full"] else "lite"],
+        key=PROFILE_RANK.__getitem__,
+    )
+    if state.get("effective_floor") != expected_floor:
+        raise ValueError("continue state effective floor 與確定性結果不一致")
+    receipt_path = state.get("baseline_receipt_path")
+    if not isinstance(receipt_path, str) or not receipt_path:
+        raise ValueError("continue state 缺少 baseline receipt")
+    receipt_identity = load_baseline_receipt(receipt_path, target)
+    if state.get("baseline_receipt_identity") != receipt_identity:
+        raise ValueError("continue state baseline receipt identity 不一致")
     if not isinstance(state.get("next_action"), str) or not state["next_action"].strip():
         raise ValueError("continue state 缺少 next_action")
-    return requested, effective, reason, state
+    return requested, effective, reason, state, release, product_floor, receipt_identity
 
 
 def gates_for(profile: str) -> dict:
@@ -268,23 +495,76 @@ def plan(args: argparse.Namespace) -> dict:
     if args.mode == "continue":
         if not args.state:
             raise ValueError("continue mode 必須提供 --state")
-        requested, effective, upgrade_reason, state = load_continue_state(args.state, args.lane)
+        if any(value is not None for value in (
+            args.profile, args.target, args.product_release_floor,
+            args.product_policy_status, args.baseline_receipt,
+        )):
+            raise ValueError("continue mode 不得以 CLI 覆寫 plan identity")
+        requested, effective, upgrade_reason, state, release, product_floor, receipt_identity = (
+            load_continue_state(args.state, args.lane)
+        )
+        target = state["target"]
+        policy_status = state["product_policy_status"]
     else:
         if args.state:
             raise ValueError("只有 continue mode 可使用 --state")
-        requested = args.profile
-        effective, upgrade_reason = effective_profile(args.lane, requested)
+        target = args.target or "unknown"
+        policy_status = args.product_policy_status or "unknown"
+        product_floor = args.product_release_floor
+        release = release_overlay(target, policy_status)
+        requested, effective, upgrade_reason = effective_profile_with_release(
+            args.lane, args.profile, product_floor, release,
+        )
         state = None
+        receipt_identity = load_baseline_receipt(args.baseline_receipt, target) if args.baseline_receipt else None
+    pre_review = "targeted"
+    surfaces = set(args.surface)
+    reviewer_modules = ["security-and-tenancy"] if surfaces & SECURITY_REVIEW_SURFACES else []
+    security_auditor = bool(surfaces & SECURITY_AUDITOR_SURFACES)
+    external_scan_confirmation = "external-scan" in surfaces
+    broad_repo_default = args.repo_test_scope in {"all", "e2e"}
+    expensive_unsplittable = broad_repo_default and args.test_filter == "unavailable" and args.test_cost == "material"
     result = {
-        "policy_version": 2,
+        "policy_version": 3,
         "lane": args.lane,
+        "change_lane": args.lane,
         "mode": args.mode,
         "requested_profile": requested,
         "effective_profile": effective,
         "profile_upgrade_reason": upgrade_reason,
         "confirmation_required": args.mode != "continue",
-        "pre_review": "targeted" if args.lane == "L1" else "full",
+        "pre_review": pre_review,
+        "test_scope": "diff_acceptance_and_nearest_required_sentinels",
+        "full_site_authorized": False,
+        "baseline_gate": {
+            "status": "confirmed" if receipt_identity is not None else "missing",
+            "fresh_receipt_required": True,
+            "user_confirmation_required": receipt_identity is None,
+            "code_write_blocked": receipt_identity is None,
+            "writer_selection_blocked": receipt_identity is None,
+            "receipt_identity": receipt_identity,
+        },
+        "test_execution": {
+            "repo_default_scope": args.repo_test_scope,
+            "filter": args.test_filter,
+            "cost": args.test_cost,
+            "scope": "diff_acceptance_and_nearest_required_sentinels",
+            "requires_user_confirmation": expensive_unsplittable,
+            "blocked_reason": "unsplittable_broad_test_has_material_cost" if expensive_unsplittable else None,
+        },
+        "validation_manifest": validation_manifest(args.lane, effective, pre_review),
         "specialized_gates": list(SPECIALIZED_GATES),
+        "reviewer_modules": reviewer_modules,
+        "security_auditor": {
+            "triggered": security_auditor,
+            "scope": sorted(surfaces & SECURITY_AUDITOR_SURFACES),
+        },
+        "external_scan_requires_confirmation": external_scan_confirmation,
+        "release_risk": release,
+        "effective_floor": max(
+            [LANE_PROFILE_FLOOR[args.lane], product_floor or "lite", "full" if release["fail_safe_full"] else "lite"],
+            key=PROFILE_RANK.__getitem__,
+        ),
         "mandatory_interruptions": list(MANDATORY_INTERRUPTIONS),
         **gates_for(effective),
     }
@@ -293,9 +573,17 @@ def plan(args: argparse.Namespace) -> dict:
             "continued_from_state": True,
             "state_task": state.get("task"),
             "next_action": state["next_action"],
+            "target": target,
+            "product_policy_status": policy_status,
+            "product_release_floor": product_floor,
         })
     else:
         result["continued_from_state"] = False
+        result.update({
+            "target": target,
+            "product_policy_status": policy_status,
+            "product_release_floor": product_floor,
+        })
     return result
 
 
@@ -321,8 +609,16 @@ def parser() -> argparse.ArgumentParser:
     plan_parser = subparsers.add_parser("plan")
     plan_parser.add_argument("--lane", choices=("L1", "L2", "L3"), required=True)
     plan_parser.add_argument("--mode", choices=("auto", "standard", "continue"), default="standard")
-    plan_parser.add_argument("--profile", choices=PROFILES, default="standard")
+    plan_parser.add_argument("--profile", choices=PROFILES)
     plan_parser.add_argument("--state")
+    plan_parser.add_argument("--target", choices=RELEASE_TARGETS)
+    plan_parser.add_argument("--product-release-floor", choices=PROFILES)
+    plan_parser.add_argument("--product-policy-status", choices=PRODUCT_POLICY_STATUSES)
+    plan_parser.add_argument("--surface", action="append", default=[], choices=CHANGE_SURFACES)
+    plan_parser.add_argument("--baseline-receipt")
+    plan_parser.add_argument("--repo-test-scope", choices=("targeted", "all", "e2e"), default="targeted")
+    plan_parser.add_argument("--test-filter", choices=("available", "unavailable"), default="available")
+    plan_parser.add_argument("--test-cost", choices=("low", "material"), default="low")
     return root
 
 

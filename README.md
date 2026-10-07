@@ -4,17 +4,18 @@
 
 ## 收錄與排除
 
-`manifest.tsv` 是 machine-checkable 清單：`install` 會進目標 `CODEX_HOME`，`support` 只服務此 repo。範本包含 AGENTS、八個子 agent、L1–L3 resolver、effort routing、standard/rapid workflow、匿名 product template/example、通用 knowledge router、dev/discover/rapid/retro skills、metrics、aiuse Codex profile 隔離、驗收／state 制度、rules 與安全腳本。
+`manifest.tsv` 是 machine-checkable 清單：`install` 會進目標 `CODEX_HOME`，`support` 只服務此 repo。範本包含 AGENTS、八個子 agent、L1–L3 resolver 與 release overlay、fresh baseline collector、effort routing、standard/rapid workflow、凍結後 D1／D2／D3 決策規則、匿名 product template/example、通用 knowledge router 與寫入規則、dev/discover/rapid/retro skills、metrics、aiuse Codex profile 隔離、驗收／evidence receipt／state 制度、rules 與安全腳本。
 
 ## `$dev` profile
 
 - `$dev full <需求>`：PM → architect → reviewer → QA → PM。
 - `$dev standard <需求>`：verifier → architect → reviewer → 同一 verifier；未指定 profile 時的預設。
 - `$dev lite <需求>`：architect 自測 → verifier。
-- profile 後可加 `auto`；所有 code 新任務仍先由使用者確認凍結，`auto` 只在凍結後自主執行。既有 `$dev auto <需求>` 等於 Standard auto。
-- `$dev 繼續 <slug>` 沿用 state 的 effective profile。L1 可用三種，L2 至少 Standard，L3 強制 Full。
+- profile 後可加 `auto`；所有 code 新任務仍先由使用者確認凍結，`auto` 只在凍結後自主執行。既有 `$dev auto <需求>` 等於 Standard auto；未指定 profile 時依 lane floor（L1→Lite、L2→Standard、L3→Full）。
+- `$dev 繼續 <slug>` 沿用 state 的完整 plan identity 與 effective profile。L1 可用三種，L2 至少 Standard，L3 強制 Full。目標環境是另列的 release risk，只加 release gate；缺 release policy 的 direct prod fail-safe Full。
+- 每次 code 任務先以 `scripts/development-baseline.py` 產生 fresh baseline receipt，使用者逐 hash 確認基準前 code 寫入保持 blocked。
 
-凍結前把新想到的內容分成「需求內必要細節／必要安全或正確性條件／可選改善」。可選改善未獲使用者確認，不得進 acceptance、code 或 blocker；凍結後只有純內部、且不改使用者可見行為、範圍、驗收、風險或成本的實作選擇可自主決定。
+凍結前先給白話摘要，並把新想到的內容分成「需求內必要細節／完成 A 不可缺少的正確性條件／可選改善」，每條 acceptance 標明需求來源。可選改善未獲使用者確認，不得進 acceptance、code 或 blocker。凍結後依 `workflows/DECISION_LOG.md` 分流：D1 局部補全由角色協作後自主記錄實作，D2 隔離待決並續做獨立需求，D3 核心或承諾變更先詢問。最終回報附改動前後對照、需求忠實度、「我幫你做的決定」與非阻擋建議。
 
 永遠排除 auth、secrets、env、webhook、sessions、history、logs、SQLite、cache、MCP runtime、shell snapshots、models cache、installation id、plugin cache、OpenAI `.system` skills，以及 Memories 生成內容、database 與 runtime state。第三方 MCP 或插件屬選配，請自行安裝並讓所有相依元件使用一致版本。
 
@@ -51,7 +52,7 @@ test -f "$target/scripts/aiuse"
 - Products：複製 `products/TEMPLATE.md`，在 INDEX 註冊 repo、規格、環境、Git owner 與驗證。
 - Agents：`agents/*.toml` 註冊角色，`agent-guides/` 放完整責任；維持 architect 是唯一產品 code 寫入者。
 - Skills：以獨立目錄加 `SKILL.md`；產品專屬部署／測試 skill 留在私人 repo。
-- Knowledge：新增可跨產品複用的卡片，回寫 INDEX 與 playbook。
+- Knowledge：依 `knowledge/README.md` 先以 `problem-class`／`tech` 查重再併，新增可跨產品複用的卡片預設 `proposed`，回寫 INDEX 與 playbook。
 - 制度：每次任務從 acceptance／state／run metrics template 複製到本機執行區；公開前再次匿名化。
 
 ## aiuse Codex profiles
@@ -62,7 +63,9 @@ Runtime preflight 會從 pinned directory fd 遞迴檢查 regular file、精確 
 
 ## 成本路由與 metrics
 
-主 session 預設 Sol/medium；機械測試與 QA 依 lane 使用 Terra low/medium，agent TOML 的 high 僅是 resolver 未介入時的 fail-safe。Luna/max 不自動啟用；`xhigh` 只允許事前說明理由的 L2/L3 單一 architect/reviewer 葉。run metrics 對多 transcript tree 只保存 raw observations，不能把不同 counter 假 sum/max；只有單一 no-history transcript 的 exact run 可進 token A/B，且每組至少五筆才可判讀。
+main 尊重使用者當前 session 選定的 model/effort，`config.example.toml` 的 Sol/medium 只是初始化範例；子 agent 依 resolver 派遣，機械測試與 QA 依 lane 使用 Terra low/medium，agent TOML 的 high 僅是 resolver 未介入時的 fail-safe。Luna/max 不自動啟用；`xhigh` 只允許事前說明理由的 L2/L3 單一 architect/reviewer 葉。run metrics 對多 transcript tree 只保存 raw observations，不能把不同 counter 假 sum/max；只有單一 no-history transcript 的 exact run 可進 token A/B，且每組至少五筆才可判讀。`workflow_identity` 直接讀當前 `CODEX_HOME` Git repo 的 branch、HEAD、去 credential 的 origin 與 fingerprint；不是 Git repo 時記 `unavailable_reason`。
+
+測試範圍預設是 diff／acceptance＋最近必要哨兵；Full 或 L3 不代表獲准跑全站。一般資安掃描與 security-auditor 預設關閉，只由明確要求或基礎設施暴露面變更觸發。
 
 ## 更新、備份與復原
 

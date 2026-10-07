@@ -36,3 +36,20 @@ __pycache__/
 /logs/
 /installation_id
 /memories/
+/runtime/
+/ipc/
+/evidence/
+/artifacts/
+/rapid/
+/skills/.system/
+
+# acceptance／state／metrics 只追蹤制度與範本；執行期清單、receipts、evidence 與 metrics output 維持忽略。
+/acceptance/*
+!/acceptance/README.md
+!/acceptance/TEMPLATE.md
+/state/*
+!/state/README.md
+!/state/TEMPLATE.json
+/run-metrics/*
+!/run-metrics/README.md
+!/run-metrics/TEMPLATE.json
