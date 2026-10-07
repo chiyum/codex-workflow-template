@@ -11,7 +11,7 @@ python3 ~/.codex/scripts/collect-run-metrics.py \
   --acceptance-result pass --repair-count 0
 ```
 
-路徑優先序是 `--codex-home`、`CODEX_HOME`、`~/.codex`，因此 `aiuse` profile 會從自己的 sessions/state 收集；可再用 `--sessions-root`／`--runs-dir` 覆寫。synthetic fixture 可直接重複傳 `--transcript`。若 live `CODEX_HOME` 不是 Git repo，可用 `CODEX_WORKFLOW_SOURCE` 明確指向實際 workflow source repo，讓 `config_commit` 可追溯；不得把個人絕對路徑寫入公開範本。
+路徑優先序是 `--codex-home`、`CODEX_HOME`、`~/.codex`，因此 `aiuse` profile 會從自己的 sessions/state 收集；可再用 `--sessions-root`／`--runs-dir` 覆寫。synthetic fixture 可直接重複傳 `--transcript`。`workflow_identity` 只讀取當前 `CODEX_HOME` Git repo 的 branch、HEAD、origin、managed dirty 與 fingerprint；不讀其他 checkout 或 source override，Git ignored runtime 不會污染身分。`CODEX_HOME` 不是 Git repo 或 origin 不可用時會寫入 `unavailable_reason`，不猜測版本；origin 只記錄去除 credential 的 canonical URL。
 
 若要量測一個明確的 no-history child，而它的 transcript 仍帶有其他 agent activity event，需加 `--single-session-only`。這個選項只接受「精確一份、`history_mode=none`、非 main」的 transcript；不符合就 fail closed，避免把 parent tree counter 冒充單 agent 成本。
 

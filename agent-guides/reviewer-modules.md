@@ -6,6 +6,7 @@
 - JWT/token 的簽章、期限、撤銷與敏感 log 正確；權限不能只靠前端隱藏。
 - 每個 query/write/cache key/event 都保留 tenant scope；換帳號、租戶或 instance 的反例必須失敗關閉。
 - 機密不進 repo、輸出、錯誤或 metrics；不可逆與付費操作具備確認、冪等與 terminal-state audit。
+- 本模組由 auth、permission、tenant 或 external input 程式碼 diff 命中，只是 reviewer 的 code-security 審查；不因此單獨啟動 security-auditor。
 
 ## database-and-consistency
 
@@ -47,5 +48,6 @@
 - 對外 port、bind address、TLS、proxy header、origin lock、secret/env 與 log 暴露面最小。
 - image/tag、volume、migration、health/readiness、rollback 與 version endpoint 對應本次 commit。
 - Docker/防火牆/反代不互相繞過；pipeline 的檢查確實接線且失敗會阻擋部署。
-- 本模組一旦命中，工作流必為 L3，並由獨立 security auditor 做環境審查；reviewer 不代替該 gate。
+- 只有 port、proxy、container、pipeline 或 DB/Redis 暴露面變更才命中獨立 security auditor；小 UI 即使 target=prod 也不命中。主動對外掃描必須先取得使用者確認。
+- 命中上述基礎設施暴露面時工作流為 L3，獨立 security auditor 做環境審查；reviewer 不代替該 gate。
 

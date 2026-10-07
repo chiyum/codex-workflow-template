@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""metrics v2 單 transcript 精確計數、多 transcript fail-closed 與 runtime 回歸測試。"""
+"""metrics v3 provenance、逐 domain availability 與 v1/v2 相容回歸測試。"""
 from __future__ import annotations
 
 import json
@@ -130,11 +130,14 @@ class RunMetricsTests(unittest.TestCase):
         self.assertEqual(2, completed.returncode, completed.stderr)
         run = self.read_run("v2-tree")
         self.assertEqual("unsupported_token_attribution", run["collector_status"])
+        self.assertEqual(3, run["schema_version"])
         self.assertIsNone(run["tokens"]["total"])
         self.assertIsNone(run["tokens"]["main_loop"])
-        self.assertEqual({}, run["tokens_by_agent"])
-        self.assertEqual({}, run["tokens_by_model"])
+        self.assertIsNone(run["tokens_by_agent"])
+        self.assertIsNone(run["tokens_by_model"])
         self.assertEqual("unsupported_multi_transcript", run["token_attribution"]["status"])
+        self.assertEqual("unavailable", run["availability"]["tokens"]["status"])
+        self.assertEqual("exact", run["availability"]["agents"]["status"])
         observations = {item["session_id"]: item for item in run["token_observations"]}
         self.assertEqual(1_000, observations[main_id]["first_usage"]["input_tokens"])
         self.assertEqual(18_856_221, observations[main_id]["final_usage"]["input_tokens"])
@@ -155,6 +158,8 @@ class RunMetricsTests(unittest.TestCase):
         ).stdout
         self.assertIn("—", report)
         self.assertIn("排除 1 筆", report)
+        self.assertIn("—(n=0)/—(n=0)/—(n=0)/—(n=0)", report)
+        self.assertIn("2.0(n=1)/1.0(n=1)/0.0(n=1)", report)
 
     def test_single_no_history_child_session_has_exact_nonzero_tokens(self) -> None:
         child_id = "single-child"
@@ -175,6 +180,9 @@ class RunMetricsTests(unittest.TestCase):
         self.assertEqual(33_285, run["token_observations"][0]["first_usage"]["input_tokens"])
         self.assertEqual(7_872_441, run["token_observations"][0]["final_usage"]["input_tokens"])
         self.assertEqual({}, run["agent_calls"])
+        self.assertEqual(0, run["agent_spawn_total"])
+        self.assertEqual({}, run["tool_counts"])
+        self.assertEqual(0, run["reuse"]["follow_up_events"])
         self.assertEqual("ok", run["runtime"]["validation_status"])
 
     def test_explicit_multiple_transcripts_are_also_unsupported_for_tokens(self) -> None:
@@ -190,6 +198,7 @@ class RunMetricsTests(unittest.TestCase):
         self.assertEqual(2, completed.returncode, completed.stderr)
         run = self.read_run("explicit-multi")
         self.assertEqual("unsupported_token_attribution", run["collector_status"])
+        self.assertEqual("explicit_transcript", run["session_provenance"]["source"])
         self.assertIsNone(run["tokens"]["total"])
         self.assertEqual(2, len(run["token_observations"]))
 
@@ -209,7 +218,7 @@ class RunMetricsTests(unittest.TestCase):
         completed = self.collect("mismatch", main_id)
         self.assertEqual(2, completed.returncode)
         run = self.read_run("mismatch")
-        self.assertEqual("unsupported_token_attribution", run["collector_status"])
+        self.assertEqual("incomplete_runtime", run["collector_status"])
         self.assertEqual("mismatch", run["runtime"]["requested_agents"][0]["validation_status"])
 
     def test_started_child_missing_transcript_fails_runtime(self) -> None:
@@ -219,7 +228,13 @@ class RunMetricsTests(unittest.TestCase):
         self.assertEqual(2, completed.returncode)
         run = self.read_run("missing-child")
         self.assertEqual("incomplete_runtime", run["collector_status"])
-        self.assertEqual("missing_child", run["runtime"]["requested_agents"][0]["validation_status"])
+        self.assertIsNone(run["runtime"]["requested_agents"])
+        self.assertEqual("missing_child", run["runtime"]["agent_observations"][0]["validation_status"])
+        self.assertIsNone(run["agent_calls"])
+        self.assertIsNone(run["agent_spawn_total"])
+        self.assertIsNone(run["tool_counts"])
+        self.assertIsNone(run["reuse"])
+        self.assertIsNone(run["fork"])
 
     def test_spawn_without_started_event_fails_runtime(self) -> None:
         main_id = "failed-spawn-main"
@@ -229,6 +244,9 @@ class RunMetricsTests(unittest.TestCase):
         run = self.read_run("failed-spawn")
         self.assertEqual("incomplete_runtime", run["collector_status"])
         self.assertEqual("failed_spawn", run["runtime"]["requested_agents"][0]["validation_status"])
+        self.assertEqual("exact", run["availability"]["agents"]["status"])
+        self.assertEqual({}, run["agent_calls"])
+        self.assertEqual(0, run["agent_spawn_total"])
 
     def test_discovered_child_without_usage_fails_whole_run(self) -> None:
         main_id, child_id = "no-usage-main", "no-usage-child"
@@ -239,6 +257,12 @@ class RunMetricsTests(unittest.TestCase):
         run = self.read_run("no-usage")
         self.assertEqual("unsupported_schema", run["collector_status"])
         self.assertIn(child_id, " ".join(run["collector_errors"]))
+        self.assertIsNone(run["tokens"]["total"])
+        self.assertEqual("unavailable", run["availability"]["tokens"]["status"])
+        self.assertEqual("exact", run["availability"]["agents"]["status"])
+        self.assertEqual({"qa": 1}, run["agent_calls"])
+        self.assertEqual({"spawn_agent": 1}, run["tool_counts"])
+        self.assertEqual(0, run["reuse"]["follow_up_events"])
 
     def test_unsupported_and_legacy_unverified_are_excluded_from_report(self) -> None:
         session_id = "unsupported-session"
@@ -256,38 +280,312 @@ class RunMetricsTests(unittest.TestCase):
         self.assertIn("v1/legacy_unverified", report)
         self.assertIn("排除 2 筆", report)
 
-    def test_config_commit_uses_configured_workflow_source(self) -> None:
-        source = Path(self.context.name) / "source"
-        source.mkdir()
-        subprocess.run(["git", "init", "-q", str(source)], check=True)
-        (source / "AGENTS.md").write_text("source\n", encoding="utf-8")
-        subprocess.run(["git", "-C", str(source), "add", "AGENTS.md"], check=True)
+    def test_workflow_identity_uses_current_codex_home_only(self) -> None:
+        self.home.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", "-b", "main", str(self.home)], check=True)
+        (self.home / ".gitignore").write_text("/sessions/\n/run-metrics/\n/runtime/\n", encoding="utf-8")
+        (self.home / "AGENTS.md").write_text("source\n", encoding="utf-8")
+        (self.home / "workflow-source.toml").write_text(
+            'repository = "/srv/example/.codex"\n', encoding="utf-8",
+        )
+        subprocess.run(["git", "-C", str(self.home), "add", ".gitignore", "AGENTS.md", "workflow-source.toml"], check=True)
         subprocess.run([
-            "git", "-C", str(source), "-c", "user.name=Test", "-c", "user.email=test@example.com",
+            "git", "-C", str(self.home), "-c", "user.name=Test", "-c", "user.email=test@example.com",
             "commit", "-qm", "source",
         ], check=True)
         expected = subprocess.run(
-            ["git", "-C", str(source), "rev-parse", "--short", "HEAD"],
+            ["git", "-C", str(self.home), "rev-parse", "HEAD"],
             text=True, capture_output=True, check=True,
         ).stdout.strip()
-        self.home.mkdir(parents=True, exist_ok=True)
-        (self.home / "workflow-source.toml").write_text(f'repository = "{source}"\n', encoding="utf-8")
+        remote = self.root if hasattr(self, "root") else Path(self.context.name) / "origin.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
+        subprocess.run(["git", "-C", str(self.home), "remote", "add", "origin", str(remote)], check=True)
         self.write_main("pointer-session", [usage(2)])
         completed = self.collect("pointer", "pointer-session")
         self.assertEqual(0, completed.returncode, completed.stderr)
-        self.assertEqual(expected, self.read_run("pointer")["config_commit"])
+        run = self.read_run("pointer")
+        self.assertEqual(expected[:7], run["config_commit"])
+        self.assertEqual(expected, run["workflow_identity"]["head"])
+        self.assertEqual(str(self.home.resolve()), run["workflow_identity"]["repo"])
+
+    def test_ignored_runtime_does_not_change_managed_fingerprint(self) -> None:
+        self.home.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", "-b", "main", str(self.home)], check=True)
+        (self.home / ".gitignore").write_text("/sessions/\n/run-metrics/\n/runtime/\n", encoding="utf-8")
+        (self.home / "AGENTS.md").write_text("source\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.home), "add", ".gitignore", "AGENTS.md"], check=True)
+        subprocess.run([
+            "git", "-C", str(self.home), "-c", "user.name=Test", "-c", "user.email=test@example.com",
+            "commit", "-qm", "source",
+        ], check=True)
+        self.write_main("identity-a", [usage(2)])
+        first = self.collect("identity-a", "identity-a")
+        self.assertEqual(0, first.returncode, first.stderr)
+        before = self.read_run("identity-a")["workflow_identity"]
+        runtime = self.home / "runtime"
+        runtime.mkdir()
+        (runtime / "ignored.txt").write_text("ignored\n", encoding="utf-8")
+        self.write_main("identity-b", [usage(2)])
+        second = self.collect("identity-b", "identity-b")
+        self.assertEqual(0, second.returncode, second.stderr)
+        after = self.read_run("identity-b")["workflow_identity"]
+        self.assertEqual(before["managed_fingerprint"], after["managed_fingerprint"])
+        self.assertFalse(after["managed_dirty"])
+
+    def test_workflow_identity_drops_credential_bearing_origin_without_echo(self) -> None:
+        unsafe_origins = (
+            "https://user:password@host.example.com/repo.git",
+            "ssh://user:password@host.example.com/repo.git",
+            "https://host.example.com/repo.git?token=value",
+            "ssh://host.example.com/repo.git#credential",
+        )
+        for index, unsafe in enumerate(unsafe_origins):
+            with self.subTest(origin=index):
+                home = Path(self.context.name) / f"unsafe-home-{index}"
+                subprocess.run(["git", "init", "-q", "-b", "main", str(home)], check=True)
+                (home / "AGENTS.md").write_text("source\n", encoding="utf-8")
+                subprocess.run(["git", "-C", str(home), "add", "AGENTS.md"], check=True)
+                subprocess.run([
+                    "git", "-C", str(home), "-c", "user.name=Test",
+                    "-c", "user.email=test@example.com", "commit", "-qm", "source",
+                ], check=True)
+                subprocess.run(["git", "-C", str(home), "remote", "add", "origin", unsafe], check=True)
+                completed = subprocess.run(
+                    ["python3", "-B", "-c", (
+                        "import importlib.util,json,pathlib,sys;"
+                        f"p=pathlib.Path({str(COLLECTOR)!r});"
+                        "sys.path.insert(0,str(p.parent));"
+                        "s=importlib.util.spec_from_file_location('metrics_fixture',p);"
+                        "m=importlib.util.module_from_spec(s);s.loader.exec_module(m);"
+                        f"print(json.dumps(m.workflow_identity(pathlib.Path({str(home)!r})),sort_keys=True))"
+                    )],
+                    text=True, capture_output=True, check=True,
+                )
+                self.assertNotIn(unsafe, completed.stdout)
+                self.assertNotIn("password", completed.stdout)
+                self.assertNotIn("token=value", completed.stdout)
+                identity = json.loads(completed.stdout)
+                self.assertIsNone(identity["origin"])
+                self.assertEqual("remote_url_unsafe", identity["unavailable_reason"])
 
     def test_codex_home_environment_selects_profile_sessions(self) -> None:
         session_id = "profile-session"
         self.write_main(session_id, [usage(2)])
+        self.write_main("state-shadow", [usage(50)])
+        self.write_main("runtime-shadow", [usage(90)])
+        (self.home / "state").mkdir(parents=True)
+        (self.home / "state/profile.json").write_text(
+            json.dumps({"session_id": "state-shadow"}), encoding="utf-8",
+        )
         environment = os.environ.copy()
         environment["CODEX_HOME"] = str(self.home)
+        environment["CODEX_THREAD_ID"] = "runtime-shadow"
         completed = subprocess.run(
             ["python3", str(COLLECTOR), "--slug", "profile", "--sessions", session_id],
             text=True, capture_output=True, check=False, env=environment,
         )
         self.assertEqual(0, completed.returncode, completed.stderr)
-        self.assertEqual("ok", self.read_run("profile")["collector_status"])
+        self.assertEqual(1, len(list(self.runs.glob("*-profile.json"))))
+        run = self.read_run("profile")
+        self.assertEqual("cli_session", run["session_provenance"]["source"])
+        self.assertEqual(2, run["tokens"]["total"]["input_tokens"])
+
+    def test_runtime_thread_id_is_stable_fallback_without_cli_or_state(self) -> None:
+        session_id = "runtime-thread-session"
+        self.write_main(session_id, [usage(8)])
+        environment = os.environ.copy()
+        environment["CODEX_THREAD_ID"] = session_id
+        completed = subprocess.run([
+            "python3", str(COLLECTOR), "--slug", "runtime-fallback",
+            "--codex-home", str(self.home), "--runs-dir", str(self.runs),
+        ], text=True, capture_output=True, check=False, env=environment)
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        run = self.read_run("runtime-fallback")
+        self.assertEqual("runtime_env", run["session_provenance"]["source"])
+        self.assertEqual("CODEX_THREAD_ID", run["session_provenance"]["runtime_key"])
+        self.assertEqual([session_id], run["sessions"])
+        self.assertEqual(8, run["tokens"]["total"]["input_tokens"])
+
+    def test_state_session_precedes_runtime_thread_id(self) -> None:
+        state_id, runtime_id = "state-session", "runtime-session"
+        self.write_main(state_id, [usage(11)])
+        self.write_main(runtime_id, [usage(99)])
+        state_dir = self.home / "state"
+        state_dir.mkdir(parents=True)
+        (state_dir / "state-priority.json").write_text(
+            json.dumps({"session_id": state_id}), encoding="utf-8",
+        )
+        environment = os.environ.copy()
+        environment["CODEX_THREAD_ID"] = runtime_id
+        completed = subprocess.run([
+            "python3", str(COLLECTOR), "--slug", "state-priority",
+            "--codex-home", str(self.home), "--runs-dir", str(self.runs),
+        ], text=True, capture_output=True, check=False, env=environment)
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        run = self.read_run("state-priority")
+        self.assertEqual("state", run["session_provenance"]["source"])
+        self.assertEqual([state_id], run["sessions"])
+        self.assertEqual(11, run["tokens"]["total"]["input_tokens"])
+
+    def test_missing_runtime_transcript_still_persists_auditable_run(self) -> None:
+        environment = os.environ.copy()
+        environment["CODEX_THREAD_ID"] = "missing-runtime-session"
+        completed = subprocess.run([
+            "python3", str(COLLECTOR), "--slug", "missing-runtime",
+            "--codex-home", str(self.home), "--runs-dir", str(self.runs),
+        ], text=True, capture_output=True, check=False, env=environment)
+        self.assertEqual(2, completed.returncode)
+        run = self.read_run("missing-runtime")
+        self.assertEqual("unsupported_schema", run["collector_status"])
+        self.assertEqual("runtime_env", run["session_provenance"]["source"])
+        self.assertIsNone(run["token_observations"])
+        self.assertIsNone(run["agent_spawn_total"])
+        self.assertIsNone(run["tool_counts"])
+        self.assertIsNone(run["reuse"])
+
+    def test_no_session_source_still_persists_unavailable_run(self) -> None:
+        environment = os.environ.copy()
+        environment.pop("CODEX_THREAD_ID", None)
+        completed = subprocess.run([
+            "python3", str(COLLECTOR), "--slug", "no-source",
+            "--codex-home", str(self.home), "--runs-dir", str(self.runs),
+        ], text=True, capture_output=True, check=False, env=environment)
+        self.assertEqual(2, completed.returncode)
+        run = self.read_run("no-source")
+        self.assertEqual("unavailable", run["session_provenance"]["source"])
+        self.assertEqual("unsupported_schema", run["collector_status"])
+        self.assertIsNone(run["tokens"]["total"])
+        self.assertIsNone(run["agent_calls"])
+
+    def test_unknown_jsonl_schema_uses_null_summaries(self) -> None:
+        transcript = self.sessions / "rollout-unknown.jsonl"
+        write_jsonl(transcript, [{"type": "future_schema", "payload": {"value": 1}}])
+        completed = subprocess.run([
+            "python3", str(COLLECTOR), "--slug", "unknown-schema",
+            "--transcript", str(transcript), "--codex-home", str(self.home),
+            "--runs-dir", str(self.runs),
+        ], text=True, capture_output=True, check=False)
+        self.assertEqual(2, completed.returncode)
+        run = self.read_run("unknown-schema")
+        self.assertEqual("unsupported_schema", run["collector_status"])
+        self.assertIsNone(run["agent_calls"])
+        self.assertIsNone(run["fork"])
+        self.assertIsNone(run["tool_counts"])
+        self.assertEqual("unavailable", run["availability"]["agents"]["status"])
+
+    def test_unknown_agent_shaped_event_invalidates_structural_domains_only(self) -> None:
+        session_id = "future-agent-event"
+        self.write_main(session_id, [
+            {"type": "event_msg", "payload": {
+                "type": "sub_agent_activity_v2", "agent_thread_id": "future-child",
+                "agent_path": "/root/future",
+            }},
+            usage(31),
+        ])
+        completed = self.collect("future-agent", session_id)
+        self.assertEqual(2, completed.returncode, completed.stderr)
+        run = self.read_run("future-agent")
+        self.assertEqual("unsupported_schema", run["collector_status"])
+        self.assertEqual("exact", run["availability"]["tokens"]["status"])
+        for domain in ("agents", "tools", "reuse", "fork"):
+            self.assertEqual("unavailable", run["availability"][domain]["status"])
+        self.assertIsNone(run["agent_calls"])
+        self.assertIsNone(run["tool_counts"])
+        self.assertIsNone(run["reuse"])
+        self.assertIsNone(run["fork"])
+
+    def test_unknown_tool_shaped_response_invalidates_only_tool_domain(self) -> None:
+        session_id = "future-tool-response"
+        self.write_main(session_id, [
+            {"type": "response_item", "payload": {
+                "type": "future_tool_call", "name": "future_tool", "call_id": "future-call",
+            }},
+            usage(32),
+        ])
+        completed = self.collect("future-tool", session_id)
+        self.assertEqual(2, completed.returncode, completed.stderr)
+        run = self.read_run("future-tool")
+        self.assertEqual("unsupported_schema", run["collector_status"])
+        self.assertEqual("unavailable", run["availability"]["tools"]["status"])
+        self.assertIsNone(run["tool_counts"])
+        self.assertEqual("exact", run["availability"]["agents"]["status"])
+        self.assertEqual({}, run["agent_calls"])
+        self.assertEqual(0, run["agent_spawn_total"])
+        self.assertEqual(0, run["reuse"]["follow_up_events"])
+
+    def test_session_lookup_validates_exact_meta_and_never_uses_mtime(self) -> None:
+        session_id = "exact-session"
+        self.write_main(session_id, [usage(17)])
+        write_jsonl(self.sessions / "rollout-exact-session-newer-shadow.jsonl", [
+            {"type": "session_meta", "payload": {"id": "shadow-session"}}, usage(999),
+        ])
+        completed = self.collect("exact-meta", session_id)
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        run = self.read_run("exact-meta")
+        self.assertEqual(1, run["transcript_count"])
+        self.assertEqual(17, run["tokens"]["total"]["input_tokens"])
+
+    def test_ambiguous_exact_session_fails_instead_of_picking_newest(self) -> None:
+        session_id = "ambiguous-session"
+        for suffix in ("a", "b"):
+            write_jsonl(self.sessions / f"rollout-{session_id}-{suffix}.jsonl", [
+                {"type": "session_meta", "payload": {"id": session_id}},
+                {"type": "turn_context", "payload": {"model": "gpt-5.6-sol", "effort": "medium"}},
+                usage(20),
+            ])
+        completed = self.collect("ambiguous", session_id)
+        self.assertEqual(2, completed.returncode)
+        run = self.read_run("ambiguous")
+        self.assertIn("session transcript 不唯一", " ".join(run["collector_errors"]))
+        self.assertIsNone(run["tokens"]["total"])
+
+    def test_reporter_excludes_each_unavailable_process_domain(self) -> None:
+        session_id = "report-domain-session"
+        self.write_main(session_id, [usage(25, output_tokens=5)])
+        completed = self.collect("report-domain", session_id)
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        path = next(self.runs.glob("*-report-domain.json"))
+        run = json.loads(path.read_text(encoding="utf-8"))
+        run["availability"]["agents"] = {"status": "unavailable", "reason": "mutation_fixture"}
+        run["availability"]["reuse"] = {"status": "unavailable", "reason": "mutation_fixture"}
+        run["agent_calls"] = None
+        run["agent_spawn_total"] = None
+        run["reuse"] = None
+        del run["tokens"]["total"]["cached_input_tokens"]
+        path.write_text(json.dumps(run), encoding="utf-8")
+        report = subprocess.run(
+            ["python3", str(REPORTER), "--runs-dir", str(self.runs)],
+            text=True, capture_output=True, check=True,
+        ).stdout
+        self.assertIn("—/—", report)
+        self.assertIn("—(n=0)/—(n=0)/0.0(n=1)", report)
+        self.assertIn("25.0(n=1)/—(n=0)/5.0(n=1)/0.0(n=1)", report)
+        self.assertIn("| 5 | 0 | — | —/— |", report)
+        self.assertIn("25", report)
+
+    def test_reporter_keeps_v2_exact_run_compatible(self) -> None:
+        self.runs.mkdir(parents=True, exist_ok=True)
+        (self.runs / "20260801-v2-compatible.json").write_text(json.dumps({
+            "schema_version": 2,
+            "collector_status": "ok",
+            "date": "2026-08-01",
+            "slug": "v2-compatible",
+            "token_attribution": {"status": "exact_single_transcript"},
+            "tokens": {"total": {
+                "input_tokens": 40, "cached_input_tokens": 4,
+                "output_tokens": 3, "reasoning_output_tokens": 2,
+            }},
+            "agent_calls": {}, "agent_spawn_total": 0,
+            "reuse": {"follow_up_events": 0}, "repair_count": 0,
+            "config_commit": "v2", "risk_lane": "L1", "outcome": "done",
+        }), encoding="utf-8")
+        report = subprocess.run(
+            ["python3", str(REPORTER), "--runs-dir", str(self.runs)],
+            text=True, capture_output=True, check=True,
+        ).stdout
+        self.assertIn("v2/ok/exact_single_transcript", report)
+        self.assertIn("0/0", report)
+        self.assertIn("40.0(n=1)/4.0(n=1)/3.0(n=1)/2.0(n=1)", report)
 
     def test_requested_effort_accepts_max_and_ultra_without_routing_them(self) -> None:
         session_id = "extended-effort-session"

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""rate-run.py — 把使用者的一行驗收評分寫回 run 記錄
+"""rate-run.py — 把 使用者 的一行驗收評分寫回 run 記錄
 
 用法：python3 rate-run.py --slug <任務slug> --verdict good|ok|bad [--comment "一句話"]
 slug 支援部分比對（取最新一筆命中）。
