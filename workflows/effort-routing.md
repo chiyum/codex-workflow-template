@@ -34,24 +34,25 @@ L1 的 change floor 是 Lite、L2 是 Standard、L3 是 Full。未指定 profile
 | main | 使用者當前 session 選定的 model | 使用者當前 session 選定的 effort | parent |
 | L1 architect/reviewer | `gpt-5.6-sol` | `medium` | bounded 3 turns |
 | L2 architect/reviewer | `gpt-5.6-sol` | `high` | bounded 3 turns |
-| L1–L3 QA／test 執行 | `gpt-5.6-terra` | `medium` | none |
-| L1–L2 verifier（Standard/Lite） | `gpt-5.6-terra` | `medium` | none |
-| L1–L3 純 evidence 整理（L1 audit 仍由 main 直接完成） | `gpt-5.6-terra` | `low` | none |
+| L1–L3 QA／test 執行 | `gpt-5.6-sol` | `medium` | none |
+| L1–L2 verifier（Standard/Lite） | `gpt-5.6-sol` | `medium` | none |
+| L1–L3 純 evidence 整理（L1 audit 仍由 main 直接完成） | `gpt-5.6-sol` | `medium` | none |
+| L1–L2 mechanical PM（是否啟用仍依 profile gate） | `gpt-5.6-sol` | `medium` | none |
 | L3 architect/reviewer/PM/UI 判斷角色、security auditor | `gpt-5.6-sol` | `high` | bounded 3 turns |
 
 子代理的 `xhigh` 只允許 L2/L3 的單一 architect/reviewer 葉，spawn 前必須告知使用者「為何需要深層單線推理」，並把理由傳給 `--xhigh-reason`。此限制不適用於使用者為 main 選擇的強度；不得因 main 使用 `xhigh` 就自動升級所有平行子代理。
 
-## Luna route 邊界
+## Sol／medium 執行角色政策
 
-預設 test/QA **保留 Terra low/medium**，不自動採 Luna/max。公開範本不附帶特定帳號或單次環境的 benchmark 結論；任何替換都必須先以 matched、可執行、相同 sandbox 的 A/B 證據驗證。
+公開範本目前將 QA、test、verifier、evidence、mechanical PM 與機械 A/B 執行統一路由到 `gpt-5.6-sol / medium / none`。Resolver 必須同步回傳本矩陣，不得只更新文件；指定角色不可用時回報 `AGENT_UNAVAILABLE`，不得自行換模型、降低 gate 或虛構角色結果。
 
-Luna low/medium 只列為未來可重新 benchmark 的 candidate；不得因 Terra 失敗、usage limit、unsupported 或 profile 登入狀態不明而自動切換。任何新增 Luna route 都必須有使用者拍板。collector 可記錄 `max|ultra` requested effort，僅代表遙測相容，不代表 router 允許自動使用。
+Luna low/medium 只列為未來可重新 benchmark 的 candidate；不得因指定模型失敗、usage limit、unsupported 或 profile 登入狀態不明而自動切換。任何新增 Luna route 都必須有使用者拍板。collector 可記錄 `max|ultra` requested effort，僅代表遙測相容，不代表 router 允許自動使用。
 
 ## Reuse 與遙測
 
 - 同任務退修用既有 architect/reviewer 的 follow-up，只傳 finding、diff/commit 與新增證據；Standard 的 acceptance→驗收重用同一 verifier，local→dev 沿用同一 QA/verifier，只傳環境與 delta。
 - 只有 L3 獨立性、反方審查、不同責任維度或原 agent 已不可用才新 spawn。
 - 收集 metrics 時傳 `--risk-lane`、main 的 `--requested-model/--requested-effort`；collector 會以 `turn_context` 記 effective 值並在漂移時告警。
-- A/B 由 `gpt-5.6-terra / medium`、`fork_turns=none` 的機械 agent 執行，每個 before/after 至少 5 筆。未滿樣本不得宣稱節省百分比。
+- A/B 由 `gpt-5.6-sol / medium`、`fork_turns=none` 的機械 agent 執行，每個 before/after 至少 5 筆。未滿樣本不得宣稱節省百分比。
 
 單純修改 `config.toml` 或 agent TOML 不代表已開啟的 session 會自動切換；磁碟預設供後續 session／agent 使用，main 仍以當前 session 中使用者的選擇與實際生效值為準。

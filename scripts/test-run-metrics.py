@@ -35,7 +35,7 @@ def usage(input_tokens: int, output_tokens: int = 1, cached: int = 0, reasoning:
     }
 
 
-def spawn(call_id: str, child_id: str | None, model: str = "gpt-5.6-terra", effort: str = "medium") -> list[dict]:
+def spawn(call_id: str, child_id: str | None, model: str = "gpt-5.6-sol", effort: str = "medium") -> list[dict]:
     result = [{
         "type": "response_item",
         "payload": {
@@ -93,7 +93,7 @@ class RunMetricsTests(unittest.TestCase):
         ])
 
     def write_child(
-        self, session_id: str, values: list[dict], model: str = "gpt-5.6-terra",
+        self, session_id: str, values: list[dict], model: str = "gpt-5.6-sol",
         effort: str = "medium", parent_id: str | None = None,
     ) -> None:
         write_jsonl(self.sessions / f"rollout-{session_id}.jsonl", [

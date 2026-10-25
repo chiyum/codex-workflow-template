@@ -43,6 +43,8 @@ install	run-metrics/README.md	run-metrics/README.md
 install	run-metrics/TEMPLATE.json	run-metrics/TEMPLATE.json
 install	scripts/aiuse	scripts/aiuse
 support	scripts/check-links.py	-
+install	scripts/cleanup-task.py	scripts/cleanup-task.py
+install	scripts/cleanup-task.sh	scripts/cleanup-task.sh
 install	scripts/collect-run-metrics.py	scripts/collect-run-metrics.py
 install	scripts/development-baseline.py	scripts/development-baseline.py
 support	scripts/install.sh	-
@@ -60,6 +62,7 @@ support	scripts/test-playwright-lock.sh	-
 support	scripts/test-run-metrics.py	-
 support	scripts/test-security.sh	-
 support	scripts/test-workflow-profile.py	-
+support	scripts/tests/test_cleanup_task.py	-
 support	scripts/tests/test_development_baseline.py	-
 support	scripts/tests/test_retro_digest.py	-
 support	scripts/tests/test_verify_evidence.py	-
@@ -79,7 +82,8 @@ install	skills/retro/SKILL.md	skills/retro/SKILL.md
 install	state/README.md	state/README.md
 install	state/TEMPLATE.json	state/TEMPLATE.json
 support	templates/home-AGENTS.md	-
-support	tests/fixtures/legacy-pre-provenance-20260727/content.patch.b64	-
+support	tests/fixtures/legacy-pre-provenance-20260727/content.patch.part-01.b64	-
+support	tests/fixtures/legacy-pre-provenance-20260727/content.patch.part-02.b64	-
 install	workflow-source.toml	workflow-source.toml
 install	workflows/DECISION_LOG.md	workflows/DECISION_LOG.md
 install	workflows/development-workflow.md	workflows/development-workflow.md

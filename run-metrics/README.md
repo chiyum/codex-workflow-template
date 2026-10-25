@@ -34,7 +34,7 @@ before/after 應各自派一個 `fork_turns=none` 的獨立量測 child，並各
 --experiment context-router --variant before
 ```
 
-after variant 同樣另收另一個獨立 child。執行 `python3 ~/.codex/scripts/report-runs.py`；報表對非 exact run 的 token 顯示 `—` 並排除平均。exact run 才比較 input/cached/out/reasoning、agent spawn/reuse、repair、失敗率、驗收失敗率與 verdict；每個 variant 少於 5 筆會標「不可判讀」，不得宣稱節省百分比。A/B 執行 agent 使用 `gpt-5.6-terra / medium / fork_turns=none`，不繼承目前 main 的完整歷史。
+after variant 同樣另收另一個獨立 child。執行 `python3 ~/.codex/scripts/report-runs.py`；報表對非 exact run 的 token 顯示 `—` 並排除平均。exact run 才比較 input/cached/out/reasoning、agent spawn/reuse、repair、失敗率、驗收失敗率與 verdict；每個 variant 少於 5 筆會標「不可判讀」，不得宣稱節省百分比。A/B 執行 agent 使用 `gpt-5.6-sol / medium / fork_turns=none`，不繼承目前 main 的完整歷史。
 
 ## 限制
 

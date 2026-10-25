@@ -117,28 +117,32 @@ class WorkflowProfileTests(unittest.TestCase):
                 self.assertEqual("L3", result["lane"])
 
     def test_model_effort_matrix_and_bounded_context(self) -> None:
-        main = run("resolve", "--lane", "L2", "--role", "main")
-        self.assertEqual(("gpt-5.6-sol", "medium"), (main["model"], main["model_reasoning_effort"]))
-        low_arch = run("resolve", "--lane", "L1", "--role", "architect")
-        self.assertEqual(("gpt-5.6-sol", "medium", "3"), (low_arch["model"], low_arch["model_reasoning_effort"], low_arch["fork_turns"]))
-        mechanical = run("resolve", "--lane", "L1", "--role", "pm")
-        self.assertEqual(("gpt-5.6-terra", "low", "none"), (mechanical["model"], mechanical["model_reasoning_effort"], mechanical["fork_turns"]))
-        for role, effort in (("qa", "medium"), ("test", "medium"), ("evidence", "low")):
-            with self.subTest(role=role):
-                mechanical = run("resolve", "--lane", "L3", "--role", role)
-                self.assertEqual(
-                    ("gpt-5.6-terra", effort, "none", "none"),
-                    (
-                        mechanical["model"],
-                        mechanical["model_reasoning_effort"],
-                        mechanical["history_mode"],
-                        mechanical["fork_turns"],
-                    ),
-                )
-        high_pm = run("resolve", "--lane", "L3", "--role", "pm")
-        self.assertEqual(("gpt-5.6-sol", "high", "3"), (high_pm["model"], high_pm["model_reasoning_effort"], high_pm["fork_turns"]))
-        security = run("resolve", "--lane", "L1", "--role", "security_auditor")
-        self.assertEqual("high", security["model_reasoning_effort"])
+        roles = (
+            "main", "architect", "reviewer", "qa", "test", "pm", "verifier", "evidence",
+            "ui_designer", "design_reviewer", "security_auditor",
+        )
+        mechanical = {"qa", "test", "verifier", "evidence"}
+        bounded = {"architect", "reviewer", "ui_designer", "design_reviewer"}
+        for lane in ("L1", "L2", "L3"):
+            for role in roles:
+                with self.subTest(lane=lane, role=role):
+                    if role == "main":
+                        expected = ("gpt-5.6-sol", "medium", "parent", None)
+                    elif role in mechanical or (role == "pm" and lane != "L3"):
+                        expected = ("gpt-5.6-sol", "medium", "none", "none")
+                    elif role == "security_auditor" or lane == "L3":
+                        expected = ("gpt-5.6-sol", "high", "bounded", "3")
+                    elif role in bounded:
+                        effort = "medium" if lane == "L1" else "high"
+                        expected = ("gpt-5.6-sol", effort, "bounded", "3")
+                    else:
+                        self.fail(f"missing expected profile for {lane}/{role}")
+                    resolved = run("resolve", "--lane", lane, "--role", role)
+                    self.assertEqual(3, resolved["policy_version"])
+                    self.assertEqual(expected, (
+                        resolved["model"], resolved["model_reasoning_effort"],
+                        resolved["history_mode"], resolved["fork_turns"],
+                    ))
 
     def test_xhigh_requires_reason_role_and_non_l1(self) -> None:
         allowed = run("resolve", "--lane", "L3", "--role", "reviewer", "--xhigh-reason", "深層 race 單線推理")
@@ -483,7 +487,7 @@ class WorkflowProfileTests(unittest.TestCase):
 
     def test_verifier_is_an_executable_mechanical_role(self) -> None:
         verifier = run("resolve", "--lane", "L2", "--role", "verifier")
-        self.assertEqual(("gpt-5.6-terra", "medium", "none", "none"), (
+        self.assertEqual(("gpt-5.6-sol", "medium", "none", "none"), (
             verifier["model"], verifier["model_reasoning_effort"], verifier["history_mode"],
             verifier["fork_turns"],
         ))

@@ -49,7 +49,7 @@
   - `awaiting_user`：無安全獨立工作、主要後續工作受阻，或平台只能整體暫停時才使用；不能只因一筆非阻塞待決就整案標記。
   - `awaiting_next_batch`：本批完成，等待接續。
   - `retry_exhausted`：同一階段的重試額度耗盡。
-  - `done`：必做需求與必要 gate 全部完成；仍有必做待決或驗證缺口不得使用。
+  - `done`：必做需求與必要 gate 全部完成；仍有必做待決或驗證缺口不得使用。標記後在同一收尾動作執行 `bash scripts/cleanup-task.sh <slug> --apply`，清理範圍與護欄見 `acceptance/README.md`。
 - `session_id` 若使用，只能來自 runtime 直接提供的穩定值；不得掃描 transcript 猜測。
 
 ## 配套檔（同目錄、同 slug）

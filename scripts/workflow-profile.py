@@ -193,10 +193,8 @@ def parse_dev(args: argparse.Namespace) -> dict:
 def profile_for(lane: str, role: str) -> tuple[str, str, str]:
     if role == "main":
         return "gpt-5.6-sol", "medium", "parent"
-    if role == "evidence":
-        return "gpt-5.6-terra", "low", "none"
-    if role in {"qa", "test", "verifier"}:
-        return "gpt-5.6-terra", "medium", "none"
+    if role in {"qa", "test", "verifier", "evidence"}:
+        return "gpt-5.6-sol", "medium", "none"
     if role == "security_auditor":
         return "gpt-5.6-sol", "high", "bounded"
     if lane == "L3":
@@ -204,9 +202,7 @@ def profile_for(lane: str, role: str) -> tuple[str, str, str]:
     if role in {"architect", "reviewer", "ui_designer", "design_reviewer"}:
         effort = "medium" if lane == "L1" else "high"
         return "gpt-5.6-sol", effort, "bounded"
-    if lane == "L1" and role == "pm":
-        return "gpt-5.6-terra", "low", "none"
-    return "gpt-5.6-terra", "medium", "none"
+    return "gpt-5.6-sol", "medium", "none"
 
 
 def resolve(args: argparse.Namespace) -> dict:
@@ -223,7 +219,7 @@ def resolve(args: argparse.Namespace) -> dict:
     action = "followup" if args.reuse else "spawn"
     fork_turns = None if action == "followup" or args.role == "main" else ("none" if history_mode == "none" else "3")
     return {
-        "policy_version": 2,
+        "policy_version": 3,
         "lane": args.lane,
         "role": args.role,
         "action": action,

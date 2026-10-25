@@ -30,6 +30,7 @@ python3 "$ROOT/scripts/check-links.py" "$ROOT"
 python3 "$ROOT/scripts/test-aiuse-profile.py"
 python3 "$ROOT/scripts/test-run-metrics.py"
 python3 "$ROOT/scripts/test-workflow-profile.py"
+python3 "$ROOT/scripts/tests/test_cleanup_task.py"
 bash "$ROOT/scripts/test-playwright-lock.sh"
 bash "$ROOT/scripts/scan-secrets.sh"
 if [ -x "$ROOT/scripts/validate-public.sh" ]; then bash "$ROOT/scripts/validate-public.sh"; fi

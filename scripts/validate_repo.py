@@ -154,6 +154,8 @@ def validate_installed(root: Path, target: Path) -> None:
         "workflows/rapid-change-workflow.md",
         "agents/architect.toml",
         "scripts/aiuse",
+        "scripts/cleanup-task.py",
+        "scripts/cleanup-task.sh",
         "scripts/collect-run-metrics.py",
         "scripts/workflow-profile.py",
     ):
@@ -185,8 +187,10 @@ def main() -> int:
         "agents/architect.toml", "agent-guides/architect.md", "products/INDEX.md", "knowledge/INDEX.md",
         "acceptance/README.md", "state/README.md", "run-metrics/README.md",
         "workflow-source.toml", "workflows/effort-routing.md", "workflows/rapid-change-workflow.md",
-        "scripts/aiuse", "scripts/collect-run-metrics.py", "scripts/workflow-profile.py",
+        "scripts/aiuse", "scripts/cleanup-task.py", "scripts/cleanup-task.sh",
+        "scripts/collect-run-metrics.py", "scripts/workflow-profile.py",
         "scripts/test-aiuse-profile.py", "scripts/test-run-metrics.py", "scripts/test-workflow-profile.py",
+        "scripts/tests/test_cleanup_task.py",
     }
     actual = inventory(root)
     sources, _ = manifest_sources(root)

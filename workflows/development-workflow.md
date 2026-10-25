@@ -31,7 +31,7 @@ architect 先讀產品配置與 `knowledge/ROUTER.md`（查找與合併規則見
 
 **語意偏移檢查點**：architect 每完成一條功能路徑或重大退修，固定自問「現在解的仍是原始問題嗎？每個新行為對應哪條需求？有沒有碰到非目標？有沒有新增未確認的假設？」答案交主 Codex 依 D1／D2／D3 處理，不得放寬驗收或順修相鄰問題。
 
-每次派遣前用 `scripts/workflow-profile.py resolve` 取得 model、effort 與 bounded/no-history fork。main 使用使用者當前 session 選定且實際生效的 model/effort；子 agent 依路由矩陣派遣：test/QA 採 Terra low/medium；`xhigh` 只限先說明理由的 L2/L3 單一 architect/reviewer 葉。Luna/max 不自動啟用。同任務退修優先 follow-up 重用原 agent，只傳 finding、diff 與新證據。
+每次派遣前用 `scripts/workflow-profile.py resolve` 取得 model、effort 與 bounded/no-history fork。main 使用使用者當前 session 選定且實際生效的 model/effort；子 agent 依路由矩陣派遣：test/QA 與其他機械角色採 Sol/medium；`xhigh` 只限先說明理由的 L2/L3 單一 architect/reviewer 葉。Luna/max 不自動啟用。同任務退修優先 follow-up 重用原 agent，只傳 finding、diff 與新證據。
 
 ## 2. pre-review 與核心審查
 
@@ -63,7 +63,7 @@ PM／verifier 判定 A 的 PASS／FAIL 後，另做**需求忠實度判定**：�
 
 ## 5. 收尾
 
-回報前執行 `collect-run-metrics.py`。多 transcript tree 只保留逐 session raw observations，不將不相容 counters 做 sum/max 或分帳；只有單一 no-history transcript 的 exact run 才可比較 token。回報驗收結果、證據位置、commit、push／部署狀態、已知限制，以及三步內的一分鐘複驗。任一 gate 未過就回到 architect；不可用「大致完成」代替通過。
+回報前執行 `collect-run-metrics.py`。多 transcript tree 只保留逐 session raw observations，不將不相容 counters 做 sum/max 或分帳；只有單一 no-history transcript 的 exact run 才可比較 token。必做需求與必要 gate 全部完成才將 state 標 `done`，並在同一收尾動作執行 `bash scripts/cleanup-task.sh <slug> --apply`；腳本只清該 root、該 slug 的 evidence、state runtime 與安全可移除的同名 worktree，保留 manifest 與 log。回報驗收結果、證據位置、commit、push／部署狀態、已知限制，以及三步內的一分鐘複驗。任一 gate 未過就回到 architect；不可用「大致完成」代替通過。
 
 回報已完成功能時另附：
 

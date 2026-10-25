@@ -315,13 +315,17 @@ import sys
 Path(sys.argv[1]).unlink()
 PY
   local patch="$TMP/legacy-pre-provenance-20260727.patch"
-  python3 - "$ROOT/tests/fixtures/legacy-pre-provenance-20260727/content.patch.b64" "$patch" <<'PY'
+  python3 - "$patch" \
+    "$ROOT/tests/fixtures/legacy-pre-provenance-20260727/content.patch.part-01.b64" \
+    "$ROOT/tests/fixtures/legacy-pre-provenance-20260727/content.patch.part-02.b64" <<'PY'
 from base64 import b64decode
 from pathlib import Path
 import sys
-source, destination = map(Path, sys.argv[1:])
-encoded = b"".join(source.read_bytes().split())
-destination.write_bytes(b64decode(encoded, validate=True))
+destination, *sources = map(Path, sys.argv[1:])
+with destination.open("wb") as output:
+    for source in sources:
+        encoded = b"".join(source.read_bytes().split())
+        output.write(b64decode(encoded, validate=True))
 PY
   (cd "$target" && "$REAL_GIT" apply --whitespace=nowarn --reverse "$patch")
   python3 - "$ROOT" "$target" <<'PY'
@@ -336,7 +340,9 @@ assert spec is not None and spec.loader is not None
 module = module_from_spec(spec)
 spec.loader.exec_module(module)
 fingerprint = module.legacy_tree_fingerprint(target)
-assert fingerprint in module.load_legacy_release_fingerprints(root), fingerprint
+expected = "ead910f8c52aa1e5e0b150a1e5e5c181933e29c7029dca49443dd78f494dbcae"
+assert fingerprint == expected, fingerprint
+assert expected in module.load_legacy_release_fingerprints(root)
 PY
 }
 make_registry_fault_source() {

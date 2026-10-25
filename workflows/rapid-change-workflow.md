@@ -10,7 +10,7 @@
 
 ## Model／agent 政策
 
-- 使用 `workflow-profile.py` 的 L1 profile：architect/reviewer `gpt-5.6-sol / medium / bounded`，QA `gpt-5.6-terra / medium / none`，PM evidence audit `gpt-5.6-terra / low / none`。
+- 使用 `workflow-profile.py` 的 L1 profile：architect/reviewer `gpt-5.6-sol / medium / bounded`，QA `gpt-5.6-sol / medium / none`，PM evidence audit `gpt-5.6-sol / medium / none`。
 - architect 是唯一 code 寫入者；其他角色唯讀。
 - 退修 follow-up 原 architect/reviewer，只傳 finding 與 delta；local→dev follow-up 同一 QA。agent 不可用或獨立反方維度才新 spawn。
 - custom agent TOML 不固定 effort；explicit spawn 參數必須來自 resolver。

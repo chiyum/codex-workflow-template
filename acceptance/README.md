@@ -55,3 +55,12 @@
 ## 凍結規則
 
 所有 code 新任務都先由使用者確認凍結；`auto` 只從凍結後開始自主執行。凍結後任何 agent 不得修改清單本體，evidence 目錄可隨時新增。清單用於判定 A 的 PASS／FAIL；architect 更新的規格只供參考。PM／verifier 另做需求忠實度判定，清單若已偏離原始需求必須 FAIL／BLOCKED 並回步驟 0，不得用錯誤清單合理化多做的 B。需求中途變更由使用者明示後重新凍結，舊清單標記 superseded。規劃上下文與建議做法存於 `state/<task>-handoff.md`，不構成第二份 acceptance。
+
+## 證據留存與收工清理
+
+任務的必做需求與 gate 全部通過、state 已標 `done` 後，以 `bash scripts/cleanup-task.sh <slug> --apply` 清理該安裝 root 內的執行期大檔。腳本預設只 dry-run；root 依序取 `--root`、`CODEX_HOME`、腳本安裝根，且一次只處理一個 slug。
+
+- 只會處理 `acceptance/<slug>/**/evidence/`、`state/<slug>/runtime/` 與同名 `worktrees/<slug>/`。
+- evidence 刪除前在同層附加 `evidence-manifest.txt`，記錄相對路徑、大小、UTC mtime 與 SHA-256；每筆實際清理另寫入同一 root 的 `state/cleanup.log`。
+- `status` 不是 `done|complete|completed`、找不到 `lsof`、目標忙碌、worktree dirty／未合進 main／無法確認 Git 狀態時一律保留。Git worktree branch 不自動刪除。
+- 公開版只提供單任務清理；不掃描其他 workflow home，也不提供 sweep、backlog 或 orphan 自動清理。

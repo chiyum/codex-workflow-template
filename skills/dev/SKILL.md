@@ -50,4 +50,4 @@ L1 可用三種 profile；L2 至少 Standard；L3 強制 Full。只能升級，�
 5. 一分鐘複驗指引。
 6. **我幫你做的決定**：決定、原因、未採方案、優點與缺點／代價；沒有寫「無」。
 7. questions 與 blockers（若有）、commit 與發布狀態。
-8. 必做需求及必要 gate 全部完成才標 `done`；否則回報部分完成並保存續作點。
+8. 必做需求及必要 gate 全部完成才標 `done`，並在同一收尾動作執行 `bash scripts/cleanup-task.sh <slug> --apply`；否則回報部分完成並保存續作點。

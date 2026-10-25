@@ -16,7 +16,7 @@
 4. 依 plan 跑 targeted pre-review（diff/acceptance＋最近必要哨兵）與角色 gate。Lite 不開 reviewer，Standard 不開 QA/PM，Full 保留完整獨立角色。實質退修不設輪數上限；三次只限制無新證據、無狀態改變的同一操作。
 5. 每條 acceptance 都要有實測證據；Standard/Lite 由 verifier 合併 QA 與 PM 責任，Full 由獨立 QA/PM。security/design 等命中式專項 gate 不受 profile 影響。最終 PM／verifier 另做需求忠實度判定，比較原始需求、使用者後續決定、凍結 acceptance 與實際 diff；不得因 acceptance 寫偏就把多做的 B 驗成通過。
 6. 本地 gate 全綠後才依產品配置 push；是否碰測試環境或正式環境仍受產品政策與使用者授權限制。
-7. 最終回報結果、證據、commit、發布狀態與最短複驗步驟；已完成功能另按功能路徑對照「改動前／改動後」（白話＋專業術語，數值只引用本次實測，未量測明寫），列出「我幫你做的決定」與彙整去重的非阻擋建議，沒有則明寫「無」。
+7. 最終回報結果、證據、commit、發布狀態與最短複驗步驟；已完成功能另按功能路徑對照「改動前／改動後」（白話＋專業術語，數值只引用本次實測，未量測明寫），列出「我幫你做的決定」與彙整去重的非阻擋建議，沒有則明寫「無」。必做需求與必要 gate 全部完成才標 `done`，並在同一收尾動作執行 `bash scripts/cleanup-task.sh <slug> --apply`；清理範圍與護欄以 `acceptance/README.md` 為準。
 
 ## 凍結後自主
 
@@ -34,7 +34,7 @@
 
 平行 agent 必須維度互斥且唯讀，最後只由單一收斂步驟整合。所有 gate、無進展重複動作的三次保險絲與退回路徑由主 Codex 控制。使用者反駁、測試轉紅或工具失敗時，先區分新證據、狀態變更、使用者決策變更與單純壓力；單純壓力不得翻轉技術結論、放寬 gate 或改寫凍結 acceptance。
 
-main 使用使用者當前 session 選定且實際生效的 model/effort，不因範例值切回其他設定；子 agent 依 `effort-routing.md` 明確派遣，test/QA 預設使用 Terra low/medium；`xhigh` 只限先說明理由的 L2/L3 單一 architect/reviewer 葉。Luna/max 不自動啟用，替換前必須有 matched A/B 證據與使用者決定。同任務退修與 local→dev 優先 follow-up 重用原 agent，只傳 delta。
+main 使用使用者當前 session 選定且實際生效的 model/effort，不因範例值切回其他設定；子 agent 依 `effort-routing.md` 明確派遣，test/QA 與其他機械角色預設使用 Sol/medium；`xhigh` 只限先說明理由的 L2/L3 單一 architect/reviewer 葉。Luna/max 不自動啟用，替換前必須有 matched A/B 證據與使用者決定。同任務退修與 local→dev 優先 follow-up 重用原 agent，只傳 delta。
 
 ## 權限護欄
 
